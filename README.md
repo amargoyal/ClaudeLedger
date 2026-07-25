@@ -98,18 +98,30 @@ Network down? Every panel except *Usage limits* still renders.
 
 ## Install
 
-Download or build the DMG, open it, drag **Claude Ledger** to Applications.
+Download `ClaudeLedger-1.0.0-arm64.dmg` from
+[Releases](../../releases/latest), open it, drag **Claude Ledger** to Applications.
+
+Or build it yourself:
 
 ```sh
 git clone <this repo> && cd ClaudeLedger
 npm install          # approve electron's postinstall if npm asks
-npm run dist         # builds dist/Claude Ledger-1.0.0-arm64.dmg
+npm run dist         # builds dist/ClaudeLedger-1.0.0-arm64.dmg
 ```
 
 > [!IMPORTANT]
-> **First launch will be blocked.** The app is **ad-hoc signed** — there is no Apple
-> Developer ID on the build machine — so Gatekeeper refuses a normal double-click.
-> Right-click the app → **Open** → **Open**. Once approved it launches normally forever.
+> **First launch needs one extra step.** The app is ad-hoc signed but not notarized — there
+> is no Apple Developer ID on the build machine — so Gatekeeper blocks a plain double-click.
+>
+> 1. Double-click **Claude Ledger**. macOS refuses and says it can't verify the developer.
+> 2. Click **Done**.
+> 3. Open **System Settings → Privacy & Security**, scroll to the **Security** section,
+>    and click **Open Anyway** next to *"Claude Ledger was blocked…"*.
+> 4. Confirm with **Open Anyway**, then Touch ID or your password.
+>
+> Once approved it launches normally forever after. Right-click → **Open** → **Open** also
+> works on older macOS, but on recent versions the Settings route is the one that reliably
+> offers the bypass.
 
 > [!TIP]
 > No Claude Code login yet? Run `claude` in a terminal and sign in with your Claude
@@ -117,20 +129,30 @@ npm run dist         # builds dist/Claude Ledger-1.0.0-arm64.dmg
 > for a secret.
 
 <details>
-<summary><strong>If macOS still blocks it</strong></summary>
+<summary><strong>If macOS says "damaged and can't be opened"</strong></summary>
 
 <br>
+
+That wording means the bundle's signature failed validation, not that the download is
+corrupt — and unlike the "can't verify the developer" dialog, **there is no Open Anyway
+button for it.** Clear the quarantine flag by hand:
 
 ```sh
 xattr -dr com.apple.quarantine "/Applications/Claude Ledger.app"
 ```
 
 > [!WARNING]
-> Only run that on a build you produced or trust — it strips the quarantine flag that makes
-> Gatekeeper check the bundle at all.
+> Only run that on a build you produced or trust — it strips the flag that makes Gatekeeper
+> check the bundle at all.
+
+Builds from this repo shouldn't hit it: `scripts/adhoc-sign.cjs` ad-hoc signs the bundle as
+an `afterPack` hook and fails the build if `codesign --verify --deep --strict` doesn't pass.
+Before that hook existed, `mac.identity: null` left the app with nothing but Electron's own
+linker-signed binary — `Sealed Resources=none`, `Info.plist=not bound` — which ran fine from
+`dist/` on the build machine and reported as damaged the moment anyone downloaded it.
 
 If you do have a Developer ID certificate, set `mac.identity` in `package.json` to its name
-and add `notarize`; then none of the above applies.
+and add `notarize`; then none of this applies and the app opens on a plain double-click.
 
 </details>
 
