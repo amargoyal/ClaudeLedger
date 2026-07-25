@@ -8,9 +8,20 @@ import { readConnection } from './src/credentials.js';
 import { buildSnapshot, usageCurve } from './src/aggregate.js';
 import { query as queryHistory, span as historySpan } from './src/history.js';
 import { fingerprint, loadEvents } from './src/transcripts.js';
+import {
+  lanAddresses,
+  listDevices,
+  pairingState,
+  persistLastSeen,
+  redeemPairCode,
+  revokeDevice,
+  verifyToken,
+} from './src/lan.js';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(ROOT, 'public');
+/** The phone UI. Also what Capacitor bundles into the iOS app. */
+const MOBILE_DIR = join(ROOT, 'mobile');
 
 /** Read once at startup so the UI can show which build is running. */
 const APP_VERSION = await (async () => {
@@ -26,6 +37,7 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.woff2': 'font/woff2',
   '.png': 'image/png',
@@ -40,12 +52,21 @@ function sendJSON(res, status, body) {
   res.end(text);
 }
 
-async function serveStatic(res, pathname) {
+/**
+ * @param {import('node:http').ServerResponse} res
+ * @param {string} pathname URL path, already stripped of any mount prefix
+ * @param {string} dir directory to serve from
+ * @param {string} indexFile file to return for "/"
+ */
+async function serveStatic(res, pathname, dir, indexFile = 'index.html') {
   // normalize() collapses ".." before we join, so a crafted path can't escape
-  // PUBLIC_DIR.
-  const rel = normalize(pathname === '/' ? '/index.html' : pathname).replace(/^(\.\.[/\\])+/, '');
-  const file = join(PUBLIC_DIR, rel);
-  if (!file.startsWith(PUBLIC_DIR)) {
+  // the served directory.
+  const rel = normalize(pathname === '/' || pathname === '' ? `/${indexFile}` : pathname).replace(
+    /^(\.\.[/\\])+/,
+    '',
+  );
+  const file = join(dir, rel);
+  if (!file.startsWith(dir)) {
     res.writeHead(403).end('Forbidden');
     return;
   }
@@ -83,11 +104,117 @@ async function handleSnapshot(url, res) {
   });
 }
 
-export function createApp() {
+/**
+ * Read a JSON request body, with a hard cap.
+ *
+ * Only pairing posts a body, and a pairing body is under 100 bytes. Anything
+ * larger is either a bug or someone poking at the listener.
+ */
+function readJSONBody(req, limit = 4096) {
+  return new Promise((resolve) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        req.destroy();
+        resolve(null);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+      } catch {
+        resolve(null);
+      }
+    });
+    req.on('error', () => resolve(null));
+  });
+}
+
+/** Routes a phone may call before it holds a token. Everything else needs one. */
+const PUBLIC_LAN_ROUTES = new Set(['/api/ping', '/api/pair']);
+
+/**
+ * @param {{ mode?: 'local' | 'lan' }} options
+ *   `local` — loopback listener for the desktop window. No auth: nothing off this
+ *   machine can reach it, and the desktop UI predates pairing.
+ *   `lan`  — listener bound to every interface for phones. Bearer token required,
+ *   and the only UI it serves is the phone one.
+ */
+export function createApp({ mode = 'local' } = {}) {
+  const isLan = mode === 'lan';
+
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
 
+    // The iOS app runs at capacitor://localhost, so every API call it makes is
+    // cross-origin. No cookies or credentials are involved — the bearer token is
+    // the only thing that grants access — so a wildcard origin adds no exposure.
+    if (isLan) {
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('access-control-allow-headers', 'authorization, content-type');
+      res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
+      res.setHeader('access-control-max-age', '600');
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204).end();
+        return;
+      }
+    }
+
+    let device = null;
+    if (isLan && url.pathname.startsWith('/api/') && !PUBLIC_LAN_ROUTES.has(url.pathname)) {
+      const header = req.headers.authorization ?? '';
+      device = verifyToken(header.startsWith('Bearer ') ? header.slice(7) : '');
+      if (!device) {
+        sendJSON(res, 401, { error: 'This device is not paired.', code: 'unpaired' });
+        return;
+      }
+    }
+
     try {
+      // -------------------------------------------------------------- pairing
+      if (url.pathname === '/api/ping') {
+        // Deliberately says nothing about the account — it answers "is a Claude
+        // Ledger here?" for a phone that has just been handed an address.
+        sendJSON(res, 200, {
+          app: 'claude-ledger',
+          version: APP_VERSION,
+          pairing: pairingState().active,
+        });
+        return;
+      }
+      if (url.pathname === '/api/pair' && req.method === 'POST') {
+        if (!isLan) {
+          sendJSON(res, 400, { error: 'Pairing is only available on the shared listener.' });
+          return;
+        }
+        const body = await readJSONBody(req);
+        if (!body) {
+          sendJSON(res, 400, { error: 'Malformed request.' });
+          return;
+        }
+        const result = redeemPairCode(body.code, body.name);
+        if (result.error) {
+          sendJSON(res, 403, { error: result.error });
+          return;
+        }
+        sendJSON(res, 200, { ...result, host: req.headers.host ?? null });
+        return;
+      }
+      if (url.pathname === '/api/devices') {
+        if (req.method === 'DELETE') {
+          const id = url.searchParams.get('id');
+          sendJSON(res, 200, { removed: id ? revokeDevice(id) : false, devices: listDevices() });
+          return;
+        }
+        sendJSON(res, 200, { devices: listDevices(), addresses: lanAddresses() });
+        return;
+      }
+
+      // ----------------------------------------------------------------- data
       if (url.pathname === '/api/snapshot') {
         await handleSnapshot(url, res);
         return;
@@ -133,7 +260,26 @@ export function createApp() {
         sendJSON(res, 200, await fetchAccount());
         return;
       }
-      await serveStatic(res, url.pathname);
+
+      // --------------------------------------------------------------- static
+      if (isLan) {
+        // A phone gets the phone UI at the root. The desktop dashboard is never
+        // served over the network: it assumes an unauthenticated API and a
+        // 1320px window, and neither holds here.
+        await serveStatic(res, url.pathname, MOBILE_DIR);
+        return;
+      }
+      if (url.pathname === '/m' || url.pathname === '/m/') {
+        await serveStatic(res, '/', MOBILE_DIR);
+        return;
+      }
+      if (url.pathname.startsWith('/m/')) {
+        // Lets the phone UI be developed in a desktop browser against the same
+        // loopback server the app uses.
+        await serveStatic(res, url.pathname.slice(2), MOBILE_DIR);
+        return;
+      }
+      await serveStatic(res, url.pathname, PUBLIC_DIR);
     } catch (err) {
       sendJSON(res, 500, { error: err?.message ?? 'Internal error' });
     }
@@ -146,7 +292,7 @@ export function createApp() {
  * which is what the Electron shell uses.
  */
 export function startServer({ port = Number(process.env.PORT ?? 4317), host = '127.0.0.1' } = {}) {
-  const server = createApp();
+  const server = createApp({ mode: 'local' });
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => {
@@ -156,8 +302,47 @@ export function startServer({ port = Number(process.env.PORT ?? 4317), host = '1
   });
 }
 
+/**
+ * Start the phone-facing listener. Opt-in, and the caller is expected to stop it
+ * again — nothing here starts on its own.
+ *
+ * The port is fixed rather than OS-assigned on purpose: the address gets typed
+ * into a phone by hand, and "192.168.1.42:4317" every time beats a number that
+ * changes on each launch.
+ */
+export function startLanServer({ port = Number(process.env.LEDGER_LAN_PORT ?? 4317) } = {}) {
+  const server = createApp({ mode: 'lan' });
+  const flush = setInterval(() => persistLastSeen(), 60_000);
+  flush.unref?.();
+
+  return new Promise((resolve, reject) => {
+    server.once('error', (err) => {
+      clearInterval(flush);
+      reject(err);
+    });
+    server.listen(port, '0.0.0.0', () => {
+      const addr = server.address();
+      resolve({
+        server,
+        port: typeof addr === 'object' && addr ? addr.port : port,
+        addresses: lanAddresses(),
+        stop: () =>
+          new Promise((done) => {
+            clearInterval(flush);
+            persistLastSeen();
+            server.close(() => done());
+            // close() waits for keep-alive sockets, and the phone holds one open
+            // between polls. Without this the toggle appeared to hang.
+            server.closeAllConnections?.();
+          }),
+      });
+    });
+  });
+}
+
 const isDirectRun = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (isDirectRun) {
   const { port, host } = await startServer();
   console.log(`Claude Ledger running at http://${host}:${port}`);
+  console.log(`Phone UI (dev preview)   http://${host}:${port}/m/`);
 }

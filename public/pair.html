@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pair a Phone</title>
+    <link rel="stylesheet" href="./pair.css" />
+  </head>
+  <body>
+    <div class="drag-strip" aria-hidden="true"></div>
+
+    <header class="head">
+      <h1>Pair a Phone</h1>
+      <p class="lede">
+        Share this Mac's ledger with Claude Ledger on your phone. Your Claude token stays here —
+        the phone only receives the figures.
+      </p>
+    </header>
+
+    <section class="panel">
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">Share over Wi‑Fi</div>
+          <div class="toggle-sub" id="share-sub">Off — nothing is reachable from the network.</div>
+        </div>
+        <button class="switch" id="share-switch" type="button" role="switch" aria-checked="false">
+          <span class="knob"></span>
+        </button>
+      </div>
+      <div class="error" id="share-error" hidden></div>
+    </section>
+
+    <section class="panel" id="pair-panel" hidden>
+      <div class="qr-row">
+        <div class="qr-box" id="qr-box"></div>
+        <div class="qr-side">
+          <div class="eyebrow">Scan with the Camera app</div>
+          <p class="qr-note">
+            Or open Claude Ledger on your phone and type these in.
+          </p>
+          <div class="field">
+            <div class="field-label">Address</div>
+            <select id="address-select"></select>
+          </div>
+          <div class="field">
+            <div class="field-label">Code</div>
+            <div class="code" id="code">— — — — — —</div>
+            <div class="countdown" id="countdown"></div>
+          </div>
+          <button class="btn" id="new-code" type="button">New code</button>
+
+          <div class="browser-line">
+            No app yet? Open this in Safari on your phone:<br />
+            <code id="browser-url">—</code>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div class="eyebrow">Paired devices</div>
+      </div>
+      <div id="devices"></div>
+    </section>
+
+    <footer class="foot">
+      Sharing stops when you quit Claude Ledger. A paired phone can read your usage figures for as
+      long as it stays paired — remove it here to cut it off.
+    </footer>
+
+    <script type="module" src="./pair.js"></script>
+  </body>
+</html>

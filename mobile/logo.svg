@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Claude Ledger">
+  <title>Claude Ledger</title>
+  <!-- Geometry mirrors scripts/make-icon.mjs so the app icon and this mark match. -->
+  <defs>
+    <linearGradient id="ledger-tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#CE7A4E" />
+      <stop offset="1" stop-color="#B25733" />
+    </linearGradient>
+  </defs>
+
+  <rect width="100" height="100" rx="24" fill="url(#ledger-tile)" />
+
+  <g fill="#FFFDF8">
+    <!-- Ledger rule the usage rises from. -->
+    <rect x="22" y="72" width="56" height="7" rx="3.5" />
+    <!-- Ascending usage bars. -->
+    <rect x="24" y="56" width="10" height="16" rx="5" />
+    <rect x="38" y="44" width="10" height="28" rx="5" />
+    <rect x="52" y="32" width="10" height="40" rx="5" />
+    <rect x="66" y="20" width="10" height="52" rx="5" />
+  </g>
+</svg>

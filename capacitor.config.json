@@ -1,0 +1,10 @@
+{
+  "appId": "com.amargoyal.claudeledger",
+  "appName": "Ledger",
+  "webDir": "mobile",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#f6f1e8",
+    "scrollEnabled": false
+  }
+}

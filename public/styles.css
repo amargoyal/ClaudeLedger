@@ -1,26 +1,106 @@
-/* Claude Ledger — palette and type lifted from the Ledger design. */
+/*
+ * Claude Ledger — palette and type lifted from the Ledger design.
+ *
+ * Both themes live in one token block via `light-dark()`, so every rule below is
+ * written once. Which side is used comes from `color-scheme`:
+ *
+ *   - `light dark` (the default here) follows the OS, which in the packaged app
+ *     is really `nativeTheme.themeSource` — so the Electron toggle moves the
+ *     dashboard, the popover and the pairing window together, and updates the
+ *     native window background at the same time.
+ *   - `[data-theme]` pins it. That is what makes the toggle work in a plain
+ *     browser (`npm run serve`), where there is no main process to ask.
+ *
+ * The dark side is warm, tinted toward the brand. Neutral grey would read as a
+ * different product wearing the same logo.
+ */
 :root {
-  --paper: #f6f1e8;
-  --card: #fffdf8;
-  --line: #e8e0d2;
-  --line-soft: #f1eadd;
-  --line-strong: #e1d8c6;
-  --ink: #29241d;
-  --ink-2: #57503f;
-  --ink-3: #7c7365;
-  --ink-4: #9a9080;
-  --chip: #ede6d8;
-  --track: #efe8da;
-  --accent: oklch(0.6 0.13 45);
-  --accent-deep: oklch(0.45 0.13 45);
-  --accent-dark: oklch(0.55 0.14 45);
-  --green: oklch(0.6 0.1 155);
-  --green-deep: oklch(0.55 0.11 155);
+  color-scheme: light dark;
+
+  --paper: light-dark(#f6f1e8, #16130f);
+  --card: light-dark(#fffdf8, #23201b);
+  --sunken: light-dark(#f2ede2, #1d1a15);
+  --line: light-dark(#e8e0d2, #37322a);
+  --line-soft: light-dark(#f1eadd, #2c2822);
+  --line-strong: light-dark(#e1d8c6, #443d33);
+  --ink: light-dark(#29241d, #f7f3ea);
+  --ink-2: light-dark(#57503f, #cdc4b4);
+  --ink-3: light-dark(#7c7365, #9d9384);
+  --ink-4: light-dark(#9a9080, #7a7264);
+  --chip: light-dark(#ede6d8, #322d27);
+  --track: light-dark(#efe8da, #332e27);
+  --track-strong: light-dark(#e3dac8, #443c31);
+
+  --accent: light-dark(oklch(0.6 0.13 45), oklch(0.72 0.13 45));
+  /* Used as a text colour on paper, so it has to invert rather than brighten. */
+  --accent-deep: light-dark(oklch(0.45 0.13 45), oklch(0.83 0.1 45));
+  --accent-dark: light-dark(oklch(0.55 0.14 45), oklch(0.79 0.12 45));
+  --green: light-dark(oklch(0.6 0.1 155), oklch(0.72 0.09 155));
+  --green-deep: light-dark(oklch(0.55 0.11 155), oklch(0.79 0.09 155));
+
+  /* Text that sits on a filled accent surface. */
+  --on-accent: light-dark(#fffdf8, #1b1712);
+  /* Accent-tinted surface for banners and the account card's problem state. */
+  --wash: light-dark(#fdf4ee, #392a20);
+  --accent-ghost: light-dark(oklch(0.6 0.13 45 / 0.15), oklch(0.72 0.13 45 / 0.22));
+  --accent-ring: light-dark(oklch(0.6 0.13 45 / 0.18), oklch(0.72 0.13 45 / 0.3));
+
+  --heat-0: var(--track);
+  --heat-1: color-mix(in srgb, var(--accent) 30%, var(--track));
+  --heat-2: color-mix(in srgb, var(--accent) 55%, var(--track));
+  --heat-3: color-mix(in srgb, var(--accent) 80%, var(--track));
+  --heat-4: var(--accent-dark);
+
+  /*
+   * Chart and category colours.
+   *
+   * These are read from JS with getComputedStyle rather than written into the
+   * SVG as `var(--x)`: custom properties in an SVG *presentation attribute* are
+   * not reliably resolved, so the attribute silently ends up with no colour.
+   * Reading the value keeps one source of truth here in the stylesheet.
+   */
+  --series-input: var(--accent);
+  --series-output: light-dark(oklch(0.55 0.1 155), oklch(0.74 0.09 155));
+  --series-limit0: light-dark(oklch(0.5 0.13 265), oklch(0.74 0.11 265));
+  --series-limit1: light-dark(oklch(0.48 0.13 310), oklch(0.75 0.11 310));
+  --series-limit2: light-dark(oklch(0.58 0.12 85), oklch(0.79 0.11 85));
+  --hot: light-dark(oklch(0.55 0.14 45), oklch(0.72 0.16 35));
+
+  /* In light these two separate by lightness. Dark has no room below the accent,
+     so they separate by hue instead — otherwise the donut is one orange blob. */
+  --model-fable: light-dark(oklch(0.38 0.11 45), oklch(0.63 0.16 18));
+  --model-opus: light-dark(oklch(0.6 0.13 45), oklch(0.8 0.13 62));
+  --model-sonnet: light-dark(oklch(0.52 0.09 265), oklch(0.74 0.1 265));
+  --model-haiku: light-dark(oklch(0.6 0.1 155), oklch(0.74 0.09 155));
+  --model-other: light-dark(#c9bfae, #6f6658);
+
+  /* Project tags, cycled by index. */
+  --tag-0-bg: light-dark(#f3e4da, #3a2a20);
+  --tag-0-fg: light-dark(oklch(0.45 0.12 45), oklch(0.85 0.09 45));
+  --tag-1-bg: light-dark(#e2eae2, #22301f);
+  --tag-1-fg: light-dark(oklch(0.42 0.09 155), oklch(0.85 0.08 155));
+  --tag-2-bg: light-dark(#efe6f0, #2f2438);
+  --tag-2-fg: light-dark(oklch(0.45 0.1 320), oklch(0.85 0.08 320));
+  --tag-3-bg: light-dark(#e4e8f2, #212836);
+  --tag-3-fg: light-dark(oklch(0.42 0.09 265), oklch(0.85 0.08 265));
+  --tag-4-bg: light-dark(#eae4d6, #322d24);
+  --tag-4-fg: light-dark(#57503f, #cdc4b4);
+
   --serif: 'Source Serif 4', ui-serif, Georgia, serif;
   --sans: 'IBM Plex Sans', ui-sans-serif, -apple-system, system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  --shadow: 0 1px 2px rgba(60, 50, 35, 0.05);
+  --shadow: 0 1px 2px light-dark(rgba(60, 50, 35, 0.05), rgba(0, 0, 0, 0.4));
+  --shadow-raise: 0 1px 3px light-dark(rgba(60, 50, 35, 0.15), rgba(0, 0, 0, 0.5));
+  --shadow-pop: 0 6px 20px light-dark(rgba(60, 50, 35, 0.16), rgba(0, 0, 0, 0.55));
   --radius: 14px;
+}
+
+:root[data-theme='light'] {
+  color-scheme: only light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: only dark;
 }
 
 * {
@@ -170,7 +250,7 @@ a {
 
 .account-card.is-problem {
   border-color: color-mix(in oklab, var(--accent-dark) 45%, var(--line));
-  background: #fdf4ee;
+  background: var(--wash);
 }
 
 .account-row {
@@ -216,7 +296,7 @@ a {
   padding: 2px 6px;
   border-radius: 5px;
   background: var(--accent);
-  color: #fffdf8;
+  color: var(--on-accent);
   margin-top: 6px;
 }
 
@@ -241,7 +321,7 @@ a {
 .btn.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fffdf8;
+  color: var(--on-accent);
 }
 
 .btn.primary:hover {
@@ -257,6 +337,56 @@ a {
   font-size: 11px;
   color: var(--ink-4);
   line-height: 1.5;
+}
+
+/* ------------------------------------------------------------ theme switch */
+
+.theme-switch {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 2px;
+  background: var(--chip);
+  border-radius: 9px;
+}
+
+.theme-switch button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-3);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.theme-switch button svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.theme-switch button:hover {
+  color: var(--ink);
+}
+
+.theme-switch button.is-active {
+  background: var(--card);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: var(--shadow-raise);
 }
 
 /* ------------------------------------------------------------------- main */
@@ -333,7 +463,7 @@ body.is-scrolled .page-head {
 .range-switch button.is-active {
   background: var(--card);
   color: var(--ink);
-  box-shadow: 0 1px 3px rgba(60, 50, 35, 0.15);
+  box-shadow: var(--shadow-raise);
 }
 
 .section {
@@ -357,7 +487,7 @@ body.is-scrolled .page-head {
 
 .banner {
   border: 1px solid color-mix(in oklab, var(--accent-dark) 40%, var(--line));
-  background: #fdf4ee;
+  background: var(--wash);
   border-radius: 12px;
   padding: 14px 18px;
   margin-bottom: 24px;
@@ -503,13 +633,13 @@ body.is-scrolled .page-head {
   background: var(--track);
 }
 .heat-key[data-l='1'] {
-  background: oklch(0.6 0.13 45 / 0.3);
+  background: var(--heat-1);
 }
 .heat-key[data-l='2'] {
-  background: oklch(0.6 0.13 45 / 0.55);
+  background: var(--heat-2);
 }
 .heat-key[data-l='3'] {
-  background: oklch(0.6 0.13 45 / 0.8);
+  background: var(--heat-3);
 }
 .heat-key[data-l='4'] {
   background: var(--accent-dark);
@@ -584,7 +714,7 @@ body.is-scrolled .page-head {
 
 .streak-card {
   background: var(--accent);
-  color: #fff6ee;
+  color: var(--on-accent);
   border-radius: var(--radius);
   padding: 18px 20px;
 }
@@ -1079,7 +1209,7 @@ body.is-scrolled .page-head {
 }
 
 .badge.locked {
-  background: #f2ede2;
+  background: var(--sunken);
   opacity: 0.62;
 }
 
@@ -1092,12 +1222,12 @@ body.is-scrolled .page-head {
   justify-content: center;
   font-size: 17px;
   flex: 0 0 auto;
-  background: oklch(0.6 0.13 45 / 0.15);
+  background: var(--accent-ghost);
   color: var(--accent-deep);
 }
 
 .badge.locked .badge-icon {
-  background: #e3dac8;
+  background: var(--track-strong);
   color: var(--ink-4);
 }
 
@@ -1131,7 +1261,7 @@ body.is-scrolled .page-head {
 
 /* A window the API lists but doesn't populate for this plan. */
 .limit-card.is-unreported {
-  background: #f2ede2;
+  background: var(--sunken);
   opacity: 0.7;
 }
 
@@ -1268,7 +1398,7 @@ body.is-scrolled .page-head {
   border-radius: 50%;
   background: var(--accent);
   flex: 0 0 auto;
-  box-shadow: 0 0 0 3px oklch(0.60 0.13 45 / 0.18);
+  box-shadow:  0 0 0 3px var(--accent-ring);
 }
 
 .limit-head {
@@ -1334,7 +1464,7 @@ body.is-scrolled .page-head {
   background: var(--card);
   border: 1px solid var(--line-strong);
   border-radius: 10px;
-  box-shadow: 0 6px 20px rgba(60, 50, 35, 0.16);
+  box-shadow: var(--shadow-pop);
   padding: 8px 11px;
   font-size: 12px;
   min-width: 132px;

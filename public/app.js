@@ -1,11 +1,60 @@
 const $ = (id) => document.getElementById(id);
 
+/**
+ * Resolved value of a CSS custom property, as a literal colour string.
+ *
+ * SVG needs literals: a `var()` inside a presentation attribute such as
+ * `stroke="…"` is not reliably resolved and leaves the shape uncoloured. Reading
+ * the property keeps the stylesheet the single source of truth anyway.
+ *
+ * Cached because this runs once per drawn element and getComputedStyle forces
+ * style resolution; `clearPalette()` drops the cache when the theme moves.
+ */
+const paletteCache = new Map();
+
+function color(name) {
+  if (!paletteCache.has(name)) {
+    paletteCache.set(name, getComputedStyle(document.documentElement).getPropertyValue(name).trim());
+  }
+  return paletteCache.get(name);
+}
+
+function clearPalette() {
+  paletteCache.clear();
+}
+
+/*
+ * The snapshot still carries baked colours for the heatmap, models, tools, hour
+ * bars and project tags. Those are light-theme values computed on the server,
+ * which has no idea what theme is on screen — so the client re-derives every one
+ * of them from the stylesheet, using the semantic field the payload also carries
+ * (level, tier, index, magnitude).
+ */
+const heatColor = (day) => color(`--heat-${Math.max(0, Math.min(4, day.level ?? 0))}`);
+const modelColor = (m) => color(`--model-${m.tier ?? 'other'}`);
+const toolColor = (i) => color(i % 2 ? '--series-output' : '--series-input');
+
+function applyTag(node, i) {
+  node.style.background = color(`--tag-${i % 5}-bg`);
+  node.style.color = color(`--tag-${i % 5}-fg`);
+}
+
 const SERIES_COLORS = {
-  input: 'oklch(0.60 0.13 45)',
-  output: 'oklch(0.55 0.10 155)',
-  limit0: 'oklch(0.50 0.13 265)',
-  limit1: 'oklch(0.48 0.13 310)',
-  limit2: 'oklch(0.58 0.12 85)',
+  get input() {
+    return color('--series-input');
+  },
+  get output() {
+    return color('--series-output');
+  },
+  get limit0() {
+    return color('--series-limit0');
+  },
+  get limit1() {
+    return color('--series-limit1');
+  },
+  get limit2() {
+    return color('--series-limit2');
+  },
 };
 
 const state = {
@@ -60,6 +109,73 @@ function svgEl(name, attrs) {
   const node = document.createElementNS('http://www.w3.org/2000/svg', name);
   for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
   return node;
+}
+
+// --------------------------------------------------------------------- theme
+
+const THEME_KEY = 'ledger.theme';
+/** 'system' follows the OS; the other two pin it. */
+const THEMES = ['system', 'light', 'dark'];
+
+const THEME_ICONS = {
+  system: ['M12 3.5a8.5 8.5 0 1 0 0 17z', 'M12 3.5a8.5 8.5 0 1 1 0 17'],
+  light: [
+    'M12 7.6a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8z',
+    'M12 2.4v2M12 19.6v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.4 12h2M19.6 12h2M4.6 19.4 6 18M18 6l1.4-1.4',
+  ],
+  dark: ['M20 14.2A8.4 8.4 0 0 1 9.8 4 8.6 8.6 0 1 0 20 14.2z'],
+};
+
+function currentTheme() {
+  const stored = localStorage.getItem(THEME_KEY);
+  return THEMES.includes(stored) ? stored : 'system';
+}
+
+/**
+ * Apply a theme choice.
+ *
+ * Two mechanisms on purpose. `data-theme` pins `color-scheme` for this document,
+ * which is what makes the switch work in a plain browser. Inside Electron the
+ * main process also sets `nativeTheme.themeSource`, which moves the popover, the
+ * pairing window and the native window chrome at the same time — none of which a
+ * `data-theme` attribute on this one document could reach.
+ */
+function applyTheme(theme, { repaint = true } = {}) {
+  const root = document.documentElement;
+  if (theme === 'system') delete root.dataset.theme;
+  else root.dataset.theme = theme;
+
+  localStorage.setItem(THEME_KEY, theme);
+  globalThis.ledgerShell?.setTheme?.(theme);
+
+  clearPalette();
+  renderThemeSwitch();
+  // Every chart resolves its colours at draw time, so they only move on a redraw.
+  if (repaint) paint();
+}
+
+function renderThemeSwitch() {
+  const wrap = $('theme-switch');
+  if (!wrap) return;
+  const active = currentTheme();
+  clear(wrap);
+
+  for (const theme of THEMES) {
+    const btn = el('button', theme === active ? 'is-active' : '');
+    btn.type = 'button';
+    btn.title = theme === 'system' ? 'Match the system appearance' : `Always ${theme}`;
+    btn.setAttribute('aria-pressed', String(theme === active));
+
+    const icon = svgEl('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+    for (const d of THEME_ICONS[theme]) icon.append(svgEl('path', { d }));
+    btn.append(icon, el('span', null, theme === 'system' ? 'Auto' : theme[0].toUpperCase() + theme.slice(1)));
+
+    btn.addEventListener('click', () => {
+      if (currentTheme() === theme) return;
+      applyTheme(theme);
+    });
+    wrap.appendChild(btn);
+  }
 }
 
 // ------------------------------------------------------------------ rendering
@@ -132,7 +248,7 @@ function renderStats(cards) {
       svgEl('polyline', {
         points: sparkPoints(c.series),
         fill: 'none',
-        stroke: 'oklch(0.60 0.13 45)',
+        stroke: color('--accent'),
         'stroke-width': 2,
         'stroke-linecap': 'round',
         'stroke-linejoin': 'round',
@@ -200,7 +316,7 @@ function renderActivity(activity) {
     const col = el('div', 'heat-col');
     for (const day of week.days) {
       const cell = el('div', 'heat-cell');
-      cell.style.background = day.color;
+      cell.style.background = heatColor(day);
       if (!day.empty) heatDays.set(cell, day);
       col.appendChild(cell);
     }
@@ -575,12 +691,12 @@ function renderTrend(trend, account) {
     for (const pct of [0, 25, 50, 75, 100]) {
       const y = yPct(pct);
       svg.append(
-        svgEl('line', { x1: 0, y1: y, x2: right, y2: y, stroke: '#EDE6D8', 'stroke-width': 1 }),
+        svgEl('line', { x1: 0, y1: y, x2: right, y2: y, stroke: color('--line'), 'stroke-width': 1 }),
       );
       const label = svgEl('text', {
         x: right + 5,
         y: Math.min(H - 2, Math.max(9, y + 3)),
-        fill: '#9A9080',
+        fill: color('--ink-4'),
         'font-size': 9,
       });
       label.textContent = `${pct}%`;
@@ -590,7 +706,7 @@ function renderTrend(trend, account) {
     for (const frac of [0.25, 0.5, 0.75]) {
       const y = PAD + frac * (H - PAD * 2);
       svg.append(
-        svgEl('line', { x1: 0, y1: y, x2: right, y2: y, stroke: '#EDE6D8', 'stroke-width': 1 }),
+        svgEl('line', { x1: 0, y1: y, x2: right, y2: y, stroke: color('--line'), 'stroke-width': 1 }),
       );
     }
   }
@@ -664,7 +780,7 @@ function renderTrend(trend, account) {
         cy: end[1].toFixed(1),
         r: 3.2,
         fill: line.sr.color,
-        stroke: '#FFFDF8',
+        stroke: color('--card'),
         'stroke-width': 1.4,
       }),
     );
@@ -822,7 +938,7 @@ function attachTrendHover(svg, trend, ctx) {
   const guide = svgEl('line', {
     y1: TREND_PAD,
     y2: ctx.H - TREND_PAD,
-    stroke: '#C9BFAE',
+    stroke: color('--line-strong'),
     'stroke-width': 1,
     'stroke-dasharray': '2 3',
     visibility: 'hidden',
@@ -835,7 +951,7 @@ function attachTrendHover(svg, trend, ctx) {
   const dots = series.map((sr) => {
     const dot = svgEl('circle', {
       r: 3,
-      fill: '#FFFDF8',
+      fill: color('--card'),
       stroke: sr.color,
       'stroke-width': 2,
       visibility: 'hidden',
@@ -932,7 +1048,7 @@ function renderModels(tokens) {
     const stops = models.map((m) => {
       const from = acc;
       acc += m.share;
-      return `${m.color} ${from.toFixed(2)}% ${acc.toFixed(2)}%`;
+      return `${modelColor(m)} ${from.toFixed(2)}% ${acc.toFixed(2)}%`;
     });
     donut.style.background = `conic-gradient(${stops.join(', ')})`;
   }
@@ -942,7 +1058,7 @@ function renderModels(tokens) {
   for (const m of models.slice(0, 5)) {
     const row = el('div', 'legend-row');
     const sw = el('span', 'legend-swatch');
-    sw.style.background = m.color;
+    sw.style.background = modelColor(m);
     row.append(sw, el('span', 'legend-name', m.name), el('span', 'legend-pct', `${m.share.toFixed(0)}%`));
     legend.appendChild(row);
   }
@@ -957,7 +1073,7 @@ function renderModels(tokens) {
 
     const name = el('div', 'cell-name');
     const dot = el('span', 'model-dot');
-    dot.style.background = m.color;
+    dot.style.background = modelColor(m);
     name.append(dot, el('span', null, m.name + (m.estimated ? ' *' : '')));
 
     tr.append(
@@ -973,7 +1089,7 @@ function renderModels(tokens) {
     const bar = el('div', 'bar');
     const fill = el('i');
     fill.style.width = `${Math.max(1, m.share).toFixed(1)}%`;
-    fill.style.background = m.color;
+    fill.style.background = modelColor(m);
     bar.append(fill);
     barCell.append(bar);
     tr.append(barCell);
@@ -999,7 +1115,7 @@ function renderWorkload(cards) {
     const bar = el('div', 'bar');
     const fill = el('i');
     fill.style.width = c.pctW;
-    fill.style.background = 'oklch(0.60 0.13 45)';
+    fill.style.background = color('--accent');
     bar.append(fill);
 
     const rows = el('div', 'workload-rows');
@@ -1024,18 +1140,18 @@ function renderTools(tools) {
     card.appendChild(el('div', 'empty-note', 'No tool calls in this range.'));
     return;
   }
-  for (const t of tools) {
+  tools.forEach((t, i) => {
     const row = el('div', 'tool-row');
     const name = el('div', 'tool-name', t.name);
     name.title = t.name;
     const bar = el('div', 'tool-bar');
     const fill = el('i');
     fill.style.width = t.pct;
-    fill.style.background = t.color;
+    fill.style.background = toolColor(i);
     bar.append(fill);
     row.append(name, bar, el('div', 'tool-count', fmt(t.count)));
     card.appendChild(row);
-  }
+  });
 }
 
 function renderSessions(sessions) {
@@ -1048,13 +1164,19 @@ function renderSessions(sessions) {
 
   const bars = $('hour-bars');
   clear(bars);
-  for (const h of sessions.hourBars) {
+  // The payload's `color` is a light-theme hex; the height it ships alongside is
+  // the real signal, so the shade is re-derived from that instead.
+  const heights = sessions.hourBars.map((h) => Number.parseFloat(h.height) || 0);
+  const tallest = Math.max(1, ...heights);
+  sessions.hourBars.forEach((h, i) => {
     const bar = el('div');
     bar.style.height = h.height;
-    bar.style.background = h.color;
+    const ratio = heights[i] / tallest;
+    bar.style.background =
+      ratio >= 0.85 ? color('--accent-dark') : ratio >= 0.4 ? color('--heat-2') : color('--track-strong');
     bar.title = h.tip;
     bars.appendChild(bar);
-  }
+  });
 }
 
 function sortProjects(projects) {
@@ -1090,7 +1212,7 @@ function renderProjects(projects) {
     rows.appendChild(el('div', 'empty-note', 'No project activity in this range.'));
     return;
   }
-  for (const p of projects) {
+  projects.forEach((p, i) => {
     const tr = el('div', 'tr');
 
     const name = el('div', 'cell-name');
@@ -1100,8 +1222,7 @@ function renderProjects(projects) {
 
     const tagCell = el('div');
     const tag = el('span', 'tag', p.model);
-    tag.style.background = p.tagBg;
-    tag.style.color = p.tagFg;
+    applyTag(tag, i);
     tagCell.append(tag);
 
     tr.append(
@@ -1114,7 +1235,7 @@ function renderProjects(projects) {
       el('div', 'num muted', p.last),
     );
     rows.appendChild(tr);
-  }
+  });
 }
 
 function renderFeed(feed) {
@@ -1124,11 +1245,10 @@ function renderFeed(feed) {
     card.appendChild(el('div', 'empty-note', 'Nothing in this range yet.'));
     return;
   }
-  for (const f of feed) {
+  feed.forEach((f, i) => {
     const row = el('div', 'feed-row');
     const tag = el('span', 'tag', f.surface);
-    tag.style.background = f.tagBg;
-    tag.style.color = f.tagFg;
+    applyTag(tag, i);
 
     const body = el('div', 'feed-body');
     const title = el('div', 'feed-title', f.title);
@@ -1137,7 +1257,7 @@ function renderFeed(feed) {
 
     row.append(tag, body, el('div', 'feed-time', f.time));
     card.appendChild(row);
-  }
+  });
 }
 
 function renderBadges(badges) {
@@ -1154,10 +1274,10 @@ function renderBadges(badges) {
 }
 
 /** Series colours for limit windows, by position. */
-const WINDOW_COLORS = ['oklch(0.60 0.13 45)', 'oklch(0.55 0.10 155)', 'oklch(0.50 0.11 285)', '#9A9080'];
+const WINDOW_VARS = ['--series-input', '--series-output', '--series-limit0', '--ink-4'];
 
 function windowColor(i) {
-  return WINDOW_COLORS[i % WINDOW_COLORS.length];
+  return color(WINDOW_VARS[i % WINDOW_VARS.length]);
 }
 
 /** The three (or more) limit cards at the top of the page. */
@@ -1201,7 +1321,7 @@ function renderLimitStrip(account) {
     if (reported) {
       const fill = el('i');
       fill.style.width = `${Math.min(100, Math.max(0.8, w.utilization))}%`;
-      fill.style.background = w.utilization >= 75 ? 'oklch(0.55 0.14 45)' : windowColor(i);
+      fill.style.background = w.utilization >= 75 ? color('--hot') : windowColor(i);
       track.append(fill);
     }
     card.append(track);
@@ -1402,7 +1522,19 @@ async function load() {
     return;
   }
 
+  paint();
+}
+
+/**
+ * Redraw everything from the state already in memory.
+ *
+ * Split out of load() because a theme change has to repaint — every SVG carries
+ * literal colours resolved at draw time — and refetching the whole snapshot to
+ * change a colour would be absurd.
+ */
+function paint() {
   const s = state.snapshot;
+  if (!s) return;
 
   const today = new Date(s.generatedAt).toLocaleDateString('en-US', {
     weekday: 'long',
@@ -1589,6 +1721,18 @@ window.addEventListener('resize', () => {
   trendResizeTimer = setTimeout(() => {
     if (state.snapshot) renderTrend(state.snapshot.tokens.trend, state.account);
   }, 120);
+});
+
+// Applied before the first load so the initial paint is already in the right
+// theme, and so the main process learns the stored choice on launch.
+applyTheme(currentTheme(), { repaint: false });
+
+// On 'system', an OS appearance change has to redraw the charts — their colours
+// are literals resolved when they were drawn, not live `var()` references.
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if (currentTheme() !== 'system') return;
+  clearPalette();
+  paint();
 });
 
 load();

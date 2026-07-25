@@ -48,6 +48,60 @@ const PANEL_MIN_HEIGHT = 160;
 const PANEL_MAX_HEIGHT = 720;
 
 const WINDOW_STATE_FILE = () => path.join(app.getPath('userData'), 'window-state.json');
+const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
+
+/** Surface colours per theme, used for native window backgrounds. */
+const SURFACE = {
+  window: { light: '#F6F1E8', dark: '#16130F' },
+  panel: { light: '#FFFDF8', dark: '#26231F' },
+  pair: { light: '#F6F1E8', dark: '#1F1C19' },
+};
+
+/**
+ * Read the persisted theme before the first window exists.
+ *
+ * This has to happen at creation time, not after the renderer boots: a window
+ * created with a light `backgroundColor` and then told to go dark flashes white
+ * for a frame on every launch.
+ */
+function readTheme() {
+  try {
+    const theme = JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8')).theme;
+    if (theme === 'light' || theme === 'dark' || theme === 'system') return theme;
+  } catch {
+    /* first run */
+  }
+  return 'system';
+}
+
+function saveTheme(theme) {
+  try {
+    fs.writeFileSync(SETTINGS_FILE(), JSON.stringify({ theme }));
+  } catch {
+    /* non-fatal */
+  }
+}
+
+const surface = (kind) => SURFACE[kind][nativeTheme.shouldUseDarkColors ? 'dark' : 'light'];
+
+/**
+ * Point every native surface at the chosen theme.
+ *
+ * `nativeTheme.themeSource` is the lever that matters: it also decides what
+ * `prefers-color-scheme` reports inside *every* renderer, so the popover and the
+ * pairing window follow without needing to be told.
+ */
+function setTheme(theme) {
+  nativeTheme.themeSource = theme === 'light' || theme === 'dark' ? theme : 'system';
+  saveTheme(theme);
+  applySurfaces();
+}
+
+function applySurfaces() {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBackgroundColor(surface('window'));
+  if (panel && !panel.isDestroyed()) panel.setBackgroundColor(surface('panel'));
+  if (pairWindow && !pairWindow.isDestroyed()) pairWindow.setBackgroundColor(surface('pair'));
+}
 
 function readWindowState() {
   try {
@@ -71,8 +125,13 @@ function saveWindowState(win) {
 
 let mainWindow = null;
 let panel = null;
+let pairWindow = null;
 let tray = null;
 let serverInfo = null;
+let serverModule = null;
+let lan = null;
+let lanError = null;
+let lanModule = null;
 let anthropic = null;
 let lastAccount = null;
 
@@ -102,11 +161,13 @@ function createWindow(port) {
     minWidth: 900,
     minHeight: 640,
     show: false,
-    backgroundColor: '#F6F1E8',
+    backgroundColor: surface('window'),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     webPreferences: {
-      // The dashboard renderer only talks to the local HTTP API — no Node needed.
+      // The dashboard renderer only talks to the local HTTP API. The preload adds
+      // exactly one call — setting the theme, which needs to reach native surfaces.
+      preload: path.join(__dirname, 'preload-main.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -187,7 +248,7 @@ function createPanel(port) {
     // arbitrary desktop has no contrast guarantee — text was genuinely hard to
     // read against busy backdrops. A solid surface that follows the system theme
     // is legible every time.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#26231F' : '#FFFDF8',
+    backgroundColor: surface('panel'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -207,7 +268,7 @@ function createPanel(port) {
   // Keep the native surface in step with the CSS, which follows prefers-color-scheme.
   nativeTheme.on('updated', () => {
     if (panel && !panel.isDestroyed()) {
-      panel.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#26231F' : '#FFFDF8');
+      panel.setBackgroundColor(surface('panel'));
     }
   });
 
@@ -267,6 +328,97 @@ function togglePanel() {
   showPanel();
 }
 
+// --------------------------------------------------------------- phone pairing
+
+/**
+ * The pairing window is the only place sharing can be switched on.
+ *
+ * Deliberately a window rather than a menu item that silently starts a listener:
+ * opening a port that serves your usage data to the local network is not
+ * something that should happen without a screen explaining it, showing which
+ * address is live, and listing what is currently paired.
+ */
+function createPairWindow(port) {
+  pairWindow = new BrowserWindow({
+    width: 520,
+    height: 700,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    show: false,
+    backgroundColor: surface('pair'),
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 12, y: 12 },
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-pair.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+    },
+  });
+
+  pairWindow.loadURL(`http://127.0.0.1:${port}/pair.html`);
+  pairWindow.once('ready-to-show', () => pairWindow.show());
+  pairWindow.on('closed', () => {
+    pairWindow = null;
+  });
+  nativeTheme.on('updated', () => {
+    if (pairWindow && !pairWindow.isDestroyed()) {
+      pairWindow.setBackgroundColor(surface('pair'));
+    }
+  });
+  return pairWindow;
+}
+
+function openPairWindow() {
+  if (!serverInfo) return;
+  hidePanel();
+  if (!pairWindow) createPairWindow(serverInfo.port);
+  pairWindow.show();
+  pairWindow.focus();
+}
+
+function pairState() {
+  return {
+    sharing: Boolean(lan),
+    port: lan?.port ?? null,
+    addresses: lanModule ? lanModule.lanAddresses() : [],
+    pairing: lanModule ? lanModule.pairingState() : { active: false },
+    devices: lanModule ? lanModule.listDevices() : [],
+    error: lanError,
+  };
+}
+
+async function setSharing(on) {
+  lanError = null;
+  if (on && !lan) {
+    try {
+      lan = await serverModule.startLanServer();
+    } catch (err) {
+      lan = null;
+      lanError =
+        err?.code === 'EADDRINUSE'
+          ? 'Port 4317 is already in use by another program. Quit it and try again.'
+          : (err?.message ?? 'Could not start sharing.');
+    }
+  } else if (!on && lan) {
+    // Closing the listener without also closing the pairing window would leave a
+    // live code on screen for a service that no longer answers.
+    lanModule?.stopPairing();
+    await lan.stop();
+    lan = null;
+  }
+  return pairState();
+}
+
+async function stopSharing() {
+  if (lan) {
+    await lan.stop();
+    lan = null;
+  }
+}
+
 // --------------------------------------------------------------------- menu bar
 
 function planLabel(account) {
@@ -294,6 +446,11 @@ function trayContextMenu() {
   return Menu.buildFromTemplate([
     { label: 'Open Dashboard', click: () => openWindow() },
     { label: 'Refresh Now', click: () => refreshTray({ force: true }) },
+    { type: 'separator' },
+    {
+      label: lan ? 'Phone Sharing — On…' : 'Pair a Phone…',
+      click: () => openPairWindow(),
+    },
     { type: 'separator' },
     { role: 'quit', label: 'Quit Claude Ledger' },
   ]);
@@ -344,11 +501,26 @@ async function createTray() {
   // Development affordance: the popover normally only opens on a tray click,
   // which is awkward to drive from a script or a test.
   if (process.env.LEDGER_SHOW_PANEL === '1') setTimeout(() => showPanel(), 600);
+  if (process.env.LEDGER_SHOW_PAIR === '1') setTimeout(() => openPairWindow(), 600);
 }
 
 // -------------------------------------------------------------------------- IPC
 
 function registerIpc() {
+  ipcMain.on('ledger:set-theme', (_event, theme) => setTheme(theme));
+
+  ipcMain.handle('pair:state', () => pairState());
+  ipcMain.handle('pair:set-sharing', (_event, on) => setSharing(on));
+  ipcMain.handle('pair:new-code', () => {
+    lanModule?.startPairing();
+    return pairState();
+  });
+  ipcMain.handle('pair:revoke', (_event, id) => {
+    lanModule?.revokeDevice(id);
+    return pairState();
+  });
+  ipcMain.on('pair:close', () => pairWindow?.close());
+
   ipcMain.handle('ledger:account', async () => lastAccount ?? (await refreshTray()));
   ipcMain.handle('ledger:refresh', async () => refreshTray({ force: true }));
   ipcMain.on('ledger:open-dashboard', () => openWindow());
@@ -368,7 +540,24 @@ function registerIpc() {
 function buildAppMenu() {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
-      { role: 'appMenu' },
+      // Spelled out rather than `{ role: 'appMenu' }` so "Pair a Phone…" can sit
+      // where a Mac user looks for it.
+      {
+        label: app.name,
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          { label: 'Pair a Phone…', accelerator: 'CmdOrCtrl+P', click: () => openPairWindow() },
+          { type: 'separator' },
+          { role: 'services' },
+          { type: 'separator' },
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' },
+        ],
+      },
       {
         label: 'View',
         submenu: [
@@ -396,13 +585,16 @@ function buildAppMenu() {
 }
 
 app.whenReady().then(async () => {
+  // Before any window is created, so the first frame is already the right colour.
+  nativeTheme.themeSource = readTheme();
   buildAppMenu();
   registerIpc();
 
   try {
-    const { startServer } = await importLocal('server.js');
+    serverModule = await importLocal('server.js');
+    lanModule = await importLocal('src/lan.js');
     // Port 0 = let the OS pick a free port, bound to loopback only.
-    serverInfo = await startServer({ port: 0, host: '127.0.0.1' });
+    serverInfo = await serverModule.startServer({ port: 0, host: '127.0.0.1' });
   } catch (err) {
     dialog.showErrorBox(
       'Claude Ledger could not start',
@@ -433,4 +625,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   serverInfo?.server?.close();
+  // Sharing is scoped to a running app, so the port must not outlive it.
+  void stopSharing();
 });

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  A macOS dashboard and menu bar item for your Claude Code usage.<br>
+  A macOS dashboard, a menu bar item, and an iPhone app for your Claude Code usage.<br>
   Signs in with <strong>your Claude account</strong> — no API key, no token pasting, no password prompt.
 </p>
 
@@ -25,6 +25,7 @@
 <p align="center">
   <a href="#what-you-get">What you get</a> ·
   <a href="#install">Install</a> ·
+  <a href="#on-your-phone">Phone</a> ·
   <a href="#the-chart">The chart</a> ·
   <a href="#menu-bar-item">Menu bar</a> ·
   <a href="#how-the-account-connection-works">Account</a> ·
@@ -167,6 +168,98 @@ generally will **not** see an extra prompt. If macOS does ask *"Claude Ledger wa
 your confidential information"*, choose **Always Allow**.
 
 </details>
+
+## On your phone
+
+The same ledger, rebuilt for a thumb: five tabs, a session ring you can read across a room,
+pull to refresh, haptics, and a dark theme that follows the system.
+
+<p align="center">
+  <img src="docs/assets/phone-now.png" alt="Claude Ledger on iPhone" width="260">
+</p>
+
+| Tab | What's on it |
+|---|---|
+| **Now** | Session ring with live countdown and burn rate, every other limit window, headline figures, latest sessions |
+| **Usage** | Range switch, six stat tiles, a token-flow chart you scrub with a finger, model mix and per-model detail |
+| **Activity** | Streak, 18-week heatmap, hour-of-day histogram, tool and skill ranking |
+| **Projects** | Filterable project list, tap through to detail, recent activity feed |
+| **You** | Plan and account, achievements, which Mac you're paired with, unpair |
+
+### How the phone gets the data
+
+There is no Node on a phone, no `~/.claude/projects/`, and no keychain. So the phone computes
+nothing: it pairs with your Mac over your own Wi-Fi and renders the same JSON snapshot the
+desktop window renders.
+
+```
+  iPhone                                     your Mac
+ ┌────────────────────┐                    ┌──────────────────────────────────┐
+ │ Claude Ledger      │  Bearer <token>    │ 0.0.0.0:4317   (off by default)  │
+ │  · shaped figures  │ ─────────────────▶ │      ↓                           │
+ │  · last snapshot   │ ◀───────────────── │ transcripts + OAuth credential   │
+ │    cached offline  │   snapshot JSON    │      ↑ never leaves this machine  │
+ └────────────────────┘                    └──────────────────────────────────┘
+```
+
+**Your Claude token never leaves the Mac.** The phone only ever receives figures.
+
+Sharing is off until you turn it on, stops when you quit the app, and is reachable only with
+a bearer token issued during pairing. The pairing code is six digits, expires in five minutes,
+and dies after five wrong guesses.
+
+### Pair a phone
+
+1. On the Mac: **Claude Ledger → Pair a Phone…** (`⌘P`), or right-click the menu bar icon.
+2. Turn on **Share over Wi-Fi**. The window shows your Mac's address and a six-digit code.
+3. On the phone, either scan the QR with the built-in Camera app, or type the address and
+   code into the app's pairing screen.
+
+Both devices need to be on the same Wi-Fi. Two permission prompts appear once, and both have
+to be allowed or the phone can't reach the Mac:
+
+- **macOS** asks whether to let Claude Ledger accept incoming network connections, the first
+  time you turn sharing on.
+- **iOS** asks for permission to find devices on your local network, the first time the phone
+  connects.
+
+### Install it on your iPhone
+
+There are two routes, and the first needs nothing but Safari.
+
+**Just open it in Safari.** With sharing on, the pairing window prints a URL like
+`http://192.168.1.42:4317/?code=417392`. Open that on your phone and you have the whole app,
+already paired. Add to Home Screen and it runs full-screen with its own icon.
+
+**Or build the real app in Xcode.** No paid Apple Developer account required — a free Apple ID
+signs an app onto your own device for seven days, then you rebuild.
+
+```sh
+npm install
+npm run ios:add      # scaffolds ios/, then configures Info.plist and the icon
+npm run ios:open     # opens the Xcode workspace
+```
+
+In Xcode: select the **App** target → **Signing & Capabilities** → tick *Automatically manage
+signing* and pick your Apple ID team. Plug the phone in, change the run destination from your
+Mac to your phone, and press ▶. On first launch the phone will ask you to trust the developer
+under **Settings → General → VPN & Device Management**.
+
+After changing anything under `mobile/`, run `npm run ios:sync` to copy it into the project.
+
+> [!NOTE]
+> `ios/` is generated and git-ignored. Everything specific to this app —
+> the local-network permission string, the ATS exception, the `claudeledger://` URL scheme,
+> the app icon and the launch image — is reapplied by `scripts/ios-configure.mjs`, which runs
+> automatically as part of `ios:add` and `ios:sync`. Nothing has to be re-edited by hand after
+> a clean checkout.
+
+### Away from the Mac
+
+The phone keeps the last snapshot and shows it with an explicit *"Showing cached figures from
+2:14 PM"* banner rather than pretending the numbers are live. Live limits need the Mac awake
+and on the same network — copying the OAuth token onto the phone would fix that, and this app
+deliberately does not copy that credential anywhere.
 
 ## The chart
 
@@ -366,11 +459,16 @@ history. Rather than invent five plausible-looking numbers, that section was rep
 npm install          # approve electron's postinstall if npm asks
 npm start            # run the Electron app
 npm run serve        # or: plain browser mode at http://127.0.0.1:4317
+npm test             # QR encoder self-test
 ```
 
 `npm run serve` is the same server the app embeds, so you can iterate on the frontend in a
-normal browser with devtools. There is no build step — the dashboard is vanilla JS, HTML and
-CSS.
+normal browser with devtools. There is no build step — dashboard and phone UI are both vanilla
+JS, HTML and CSS.
+
+The phone UI is served alongside it at **`http://127.0.0.1:4317/m/`**, which is the fastest way
+to work on it: open that in a browser, switch to a phone viewport in devtools, and it detects
+the loopback server and skips pairing entirely.
 
 ```sh
 npm run dist            # regenerates the icon, then builds dist/*.dmg
@@ -398,24 +496,37 @@ npm run dist:unpacked   # .app only, no DMG — faster for testing packaging
 
 ```
 server.js                        HTTP server + JSON API (also the Electron backend)
-electron/main.cjs                app shell: loopback server, window, tray, popover
+electron/main.cjs                app shell: loopback server, window, tray, popover, pairing
 electron/preload.cjs             the popover's only bridge to the main process
+electron/preload-pair.cjs        the pairing window's bridge
 src/credentials.js               reads the Claude Code OAuth credential (read-only)
 src/anthropic.js                 profile + usage, caching, backoff, burn-rate samples
 src/transcripts.js               JSONL scan, parse, de-duplicate
 src/aggregate.js                 all metrics: ranges, streaks, heatmap, models, cost
 src/pricing.js                   per-model list prices and cache multipliers
+src/lan.js                       phone pairing: codes, device tokens, interfaces
 src/mark.js                      the logo, rendered to PNG with no image deps
 public/index.html|.css|app.js    dashboard (vanilla, no build step)
 public/panel.html|.css|panel.js  menu bar popover
+public/pair.html|.css|pair.js    pairing window
+public/qr.js                     QR encoder, ~200 lines, no dependency
+mobile/index.html|styles|app.js  the phone UI — also what Capacitor bundles into the iOS app
+capacitor.config.json            iOS wrapper config (webDir: mobile)
 scripts/make-icon.mjs            builds icon.png/icns from src/mark.js
+scripts/ios-configure.mjs        reapplies Info.plist keys and iOS assets after cap sync
+scripts/qr-selftest.mjs          validates the QR encoder against the published tables
 ```
 
-The popover renderer is sandboxed with no Node and no network of its own — it reaches the main
-process only through the handful of calls in `preload.cjs`.
+The popover and pairing renderers are sandboxed with no Node and no network of their own — they
+reach the main process only through the handful of calls in their preloads.
 
-Set `LEDGER_SHOW_PANEL=1` to have the popover open on launch, which is otherwise awkward to
-drive from a script.
+Two listeners, deliberately different. The desktop window talks to a loopback-only server with
+no auth, because nothing off the machine can reach it. Phones talk to a second server bound to
+every interface, which requires a bearer token on every route except `/api/ping` and
+`/api/pair`, serves the phone UI at its root, and never serves the desktop dashboard.
+
+Set `LEDGER_SHOW_PANEL=1` to have the popover open on launch, or `LEDGER_SHOW_PAIR=1` for the
+pairing window — both are otherwise awkward to drive from a script.
 
 > [!WARNING]
 > The logo geometry lives in **both** `public/logo.svg` and `src/mark.js`, in the same 0–100
@@ -435,6 +546,12 @@ drive from a script.
 | `GET /api/usage-curve?from&to&points&model` | reconstructed cumulative usage for a window |
 | `GET /api/pulse` | cheap transcript fingerprint, for change detection |
 | `POST /api/reconnect` | drops caches and re-reads the credential |
+| `GET /api/ping` | "is a Claude Ledger here?" — says nothing about the account |
+| `POST /api/pair` | `{code, name}` → a device token. Shared listener only |
+| `GET /api/devices` | paired phones — never their tokens |
+
+On the shared listener every route above needs `Authorization: Bearer <device token>` except
+`/api/ping` and `/api/pair`.
 
 ## Known limitations
 
@@ -448,4 +565,9 @@ drive from a script.
 - **Limit history starts when you first run the app.** The API reports a level, not a series,
   so it cannot be backfilled — see
   [why some limit lines are dashed](#why-some-limit-lines-are-dashed).
-- Fonts load from Google Fonts; offline, the app falls back to system serif / sans / mono.
+- The desktop dashboard loads fonts from Google Fonts; offline, it falls back to system serif /
+  sans / mono. The phone UI uses the system faces only, so it never blocks on the network.
+- **The phone needs the Mac awake and on the same Wi-Fi** for live figures. Off-network it shows
+  the last snapshot, labelled with when it was taken.
+- **A free Apple ID signs the iOS app for seven days**, then it must be rebuilt from Xcode.
+  That's an Apple limit, not one of this app's — the Safari route has no expiry.

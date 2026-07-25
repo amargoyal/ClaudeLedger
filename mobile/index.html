@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      viewport-fit=cover is what lets the tab bar sit under the home indicator and
+      the header under the notch, with env(safe-area-inset-*) reclaiming the space.
+      Without it iOS letterboxes the page and the design reads as a website.
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Ledger" />
+    <title>Claude Ledger</title>
+    <link rel="icon" type="image/svg+xml" href="./logo.svg" />
+    <link rel="apple-touch-icon" href="./logo.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <!-- ------------------------------------------------------------- connect -->
+    <section class="connect" id="connect" hidden>
+      <div class="connect-inner">
+        <img class="connect-mark" src="./logo.svg" width="76" height="76" alt="" />
+        <h1 class="connect-title">Claude Ledger</h1>
+        <p class="connect-blurb">
+          Your usage lives on your Mac. Open Claude Ledger there, choose
+          <b>Pair a Phone</b>, and enter what it shows you.
+        </p>
+
+        <div class="field">
+          <label for="host-input">Your Mac</label>
+          <input
+            id="host-input"
+            type="text"
+            inputmode="url"
+            autocapitalize="off"
+            autocorrect="off"
+            spellcheck="false"
+            placeholder="192.168.1.42"
+          />
+          <div class="field-hint">The address shown in the pairing window.</div>
+        </div>
+
+        <div class="field">
+          <label for="code-input">Pairing code</label>
+          <input
+            id="code-input"
+            class="code-input"
+            type="text"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            maxlength="6"
+            placeholder="000000"
+          />
+        </div>
+
+        <div class="connect-error" id="connect-error" hidden></div>
+
+        <button class="btn primary" id="pair-btn" type="button">Pair</button>
+        <button class="btn ghost" id="pair-help" type="button">Where do I find this?</button>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------------- app -->
+    <div class="app" id="app" hidden>
+      <header class="topbar" id="topbar">
+        <div class="topbar-row">
+          <div class="topbar-title" id="topbar-title">Now</div>
+          <button class="icon-btn" id="refresh-btn" type="button" aria-label="Refresh">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 12a8 8 0 1 1-2.6-5.9" />
+              <path d="M20 4v5h-5" />
+            </svg>
+          </button>
+        </div>
+        <div class="topbar-sub" id="topbar-sub"></div>
+      </header>
+
+      <div class="scroller" id="scroller">
+        <div class="pull" id="pull" aria-hidden="true">
+          <svg class="pull-spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /></svg>
+        </div>
+
+        <h1 class="bigtitle" id="bigtitle">Now</h1>
+        <div class="bigsub" id="bigsub"></div>
+
+        <div class="banner" id="banner" hidden></div>
+
+        <main class="views" id="views">
+          <section class="view" data-view="now"></section>
+          <section class="view" data-view="usage" hidden></section>
+          <section class="view" data-view="activity" hidden></section>
+          <section class="view" data-view="projects" hidden></section>
+          <section class="view" data-view="you" hidden></section>
+        </main>
+      </div>
+
+      <nav class="tabbar" id="tabbar" role="tablist" aria-label="Sections">
+        <button type="button" role="tab" data-tab="now" class="is-active" aria-selected="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 7.2V12l3.1 2" />
+          </svg>
+          <span>Now</span>
+        </button>
+        <button type="button" role="tab" data-tab="usage" aria-selected="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 18V9" /><path d="M9.3 18V5" /><path d="M14.7 18v-6" /><path d="M20 18v-9" />
+          </svg>
+          <span>Usage</span>
+        </button>
+        <button type="button" role="tab" data-tab="activity" aria-selected="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 13h4l2.5-6 3.4 12 2.6-8 1.9 4H21" />
+          </svg>
+          <span>Activity</span>
+        </button>
+        <button type="button" role="tab" data-tab="projects" aria-selected="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h3.2l2 2.4h7.8a2 2 0 0 1 2 2v8.1a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />
+          </svg>
+          <span>Projects</span>
+        </button>
+        <button type="button" role="tab" data-tab="you" aria-selected="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="8.6" r="3.6" />
+            <path d="M4.8 19.4a7.4 7.4 0 0 1 14.4 0" />
+          </svg>
+          <span>You</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- -------------------------------------------------------------- sheet -->
+    <div class="sheet-scrim" id="sheet-scrim" hidden></div>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true" hidden>
+      <div class="sheet-grip" id="sheet-grip"><span></span></div>
+      <div class="sheet-body" id="sheet-body"></div>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

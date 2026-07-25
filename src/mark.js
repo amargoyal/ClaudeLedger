@@ -80,11 +80,22 @@ function glyphCoverage(shapes, px, py) {
 
 /**
  * The app icon: rounded terracotta tile with a vertical gradient, cream glyph.
- * `inset` leaves the margin macOS expects around an app icon.
+ *
+ * `inset` leaves the margin macOS expects around an app icon. iOS wants the
+ * opposite — a full-bleed opaque square that it masks itself — so that variant
+ * passes `inset: 0, radius: 0` and a `background`, which also makes this usable
+ * for the iOS launch image (a small tile floating on paper).
+ *
+ * @param {number} size
+ * @param {{ inset?: number, radius?: number, background?: [number,number,number]|null }} options
+ *   `background` composites the tile over an opaque colour instead of leaving
+ *   transparency, which is what iOS requires of both icons and launch images.
  */
-export function renderAppIcon(size, { inset = Math.round(size * 0.09) } = {}) {
+export function renderAppIcon(
+  size,
+  { inset = Math.round(size * 0.09), radius = size * 0.195, background = null } = {},
+) {
   const shapes = mapShapes(GLYPH, size, inset);
-  const radius = size * 0.195;
   const buf = Buffer.alloc(size * size * 4);
 
   for (let y = 0; y < size; y += 1) {
@@ -105,11 +116,21 @@ export function renderAppIcon(size, { inset = Math.round(size * 0.09) } = {}) {
         }
       }
 
+      let alpha = Math.round(tile * 255);
+      if (background) {
+        // Composite over the backdrop rather than emitting transparency: iOS
+        // renders an icon with an alpha channel as a black square.
+        r = Math.round(background[0] + (r - background[0]) * tile);
+        g = Math.round(background[1] + (g - background[1]) * tile);
+        b = Math.round(background[2] + (b - background[2]) * tile);
+        alpha = 255;
+      }
+
       const i = (y * size + x) * 4;
       buf[i] = r;
       buf[i + 1] = g;
       buf[i + 2] = b;
-      buf[i + 3] = Math.round(tile * 255);
+      buf[i + 3] = alpha;
     }
   }
   return encodePNG(buf, size);

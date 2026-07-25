@@ -273,6 +273,10 @@ function buildHeatmap(byDay, weeks, now) {
       const rec = byDay.get(dayKey(ts));
       const messages = rec?.messages ?? 0;
       days.push({
+        // `level` is the semantic value; `color` is the light-theme rendering of
+        // it. Clients that theme themselves (both of them, now) use the level and
+        // pick their own colour — a baked hex can't follow a dark mode.
+        level: level(messages),
         color: HEAT_COLORS[level(messages)],
         date: new Date(ts).toLocaleDateString('en-US', {
           weekday: 'short',
@@ -390,6 +394,9 @@ function buildModels(events) {
       id: info.id,
       name: info.label,
       color: info.color,
+      // The tier is what the colour actually means, and it is what a themed
+      // client needs in order to choose its own.
+      tier: info.tier ?? 'other',
       estimated: Boolean(info.estimated),
       messages: totals.messages,
       tokensIn: totalIn(totals),
