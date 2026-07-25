@@ -14,12 +14,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/macOS-Apple%20silicon-BE6438?style=flat&labelColor=29241D" alt="macOS, Apple silicon">
-  <img src="https://img.shields.io/badge/auth-your%20Claude%20account-BE6438?style=flat&labelColor=29241D" alt="Authenticates with your Claude account">
+  <a href="https://github.com/Amar-Goyal8/ClaudeLedger/releases/latest"><img src="https://img.shields.io/github/downloads/Amar-Goyal8/ClaudeLedger/total?style=flat&labelColor=29241D&color=BE6438&label=downloads" alt="Downloads"></a>
+  <a href="https://github.com/Amar-Goyal8/ClaudeLedger/stargazers"><img src="https://img.shields.io/github/stars/Amar-Goyal8/ClaudeLedger?style=flat&labelColor=29241D&color=BE6438" alt="Stars"></a>
+  <a href="https://github.com/Amar-Goyal8/ClaudeLedger/releases/latest"><img src="https://img.shields.io/github/v/release/Amar-Goyal8/ClaudeLedger?style=flat&labelColor=29241D&color=BE6438&label=release" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-Apple%20silicon-7C7365?style=flat&labelColor=29241D" alt="macOS, Apple silicon">
+  <img src="https://img.shields.io/badge/auth-your%20Claude%20account-7C7365?style=flat&labelColor=29241D" alt="Authenticates with your Claude account">
   <img src="https://img.shields.io/badge/network-api.anthropic.com%20only-7C7365?style=flat&labelColor=29241D" alt="Only talks to api.anthropic.com">
-  <img src="https://img.shields.io/badge/telemetry-none-7C7365?style=flat&labelColor=29241D" alt="No telemetry">
-  <img src="https://img.shields.io/badge/frontend-vanilla%20JS%2C%20no%20build-7C7365?style=flat&labelColor=29241D" alt="Vanilla JS, no build step">
-  <img src="https://img.shields.io/badge/Electron-33-7C7365?style=flat&labelColor=29241D" alt="Electron 33">
 </p>
 
 <p align="center">
