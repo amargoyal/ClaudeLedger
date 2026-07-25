@@ -1,0 +1,418 @@
+/*
+ * Menu bar popover — Ledger identity, not a generic system panel.
+ *
+ * Three deliberate choices:
+ *  - Warm paper/terracotta palette carried over from the dashboard, so the
+ *    popover and the app read as one product.
+ *  - Serif display numerals and uppercase letterspaced eyebrows, mirroring the
+ *    dashboard's stat cards.
+ *  - Solid surfaces, never vibrancy. Translucency over an arbitrary desktop has
+ *    no contrast guarantee and the text was genuinely hard to read.
+ */
+:root {
+  --bg: #fffdf8;
+  --bg-sunken: #f6f1e8;
+  --text: #29241d;
+  --muted: #57503f;
+  --faint: #8a8173;
+  --rule: #e8e0d2;
+  --track: #ece5d7;
+  --accent: #c2603a;
+  --accent-soft: #e5c9b8;
+  --hot: #b8402c;
+  --warn-bg: #fbf0e2;
+  --warn-line: #dcb583;
+  --warn-text: #7d4a17;
+  --hover: #f1ece2;
+  --serif: 'Source Serif 4', ui-serif, Georgia, serif;
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Warm dark, tinted toward the brand rather than neutral grey. */
+    --bg: #26231f;
+    --bg-sunken: #1f1c19;
+    --text: #f7f3ea;
+    --muted: #c4bcae;
+    --faint: #948b7d;
+    --rule: #3b362f;
+    --track: #3a352d;
+    --accent: #e08a63;
+    --accent-soft: #6b4a37;
+    --hot: #ea6a4f;
+    --warn-bg: #3d2c1a;
+    --warn-line: #7d5a30;
+    --warn-text: #f0d5a9;
+    --hover: #322d27;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * The `hidden` attribute is only a UA `display: none`, so it loses to any author
+ * `display` rule. `.alert` sets `display: flex`, which meant hiding it did nothing
+ * and its ::before marker rendered as a stray warning triangle with no text.
+ */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  /* Chrome, not a document — no selection, no rubber-banding. */
+  user-select: none;
+  cursor: default;
+  overflow: hidden;
+}
+
+.panel {
+  padding: 13px 15px 9px;
+}
+
+/* ----------------------------------------------------------------- header */
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 13px;
+}
+
+.mark {
+  width: 20px;
+  height: 20px;
+  display: block;
+  flex: 0 0 auto;
+}
+
+.wordmark {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+
+.pill {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--warn-bg);
+  border: 1px solid var(--accent-soft);
+  border-radius: 5px;
+  padding: 2px 6px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.actions {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.icon-btn {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  cursor: default;
+  padding: 0;
+}
+
+.icon-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.icon-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon-btn.spinning svg {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------------------------------------------ alert */
+
+.alert {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  color: var(--warn-text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 14px;
+  line-height: 1.35;
+}
+
+.alert::before {
+  content: '▲';
+  font-size: 9px;
+  flex: 0 0 auto;
+  transform: translateY(-1px);
+}
+
+.alert b {
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------ primary (active) window */
+
+.eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.primary {
+  margin-bottom: 16px;
+}
+
+.primary-body {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 1px 0 8px;
+}
+
+.primary-figure {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 38px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.primary-figure small {
+  font-size: 18px;
+  color: var(--faint);
+  font-weight: 600;
+}
+
+/* Burn-rate sparkline — real recorded readings, not decoration. */
+.spark {
+  width: 88px;
+  height: 34px;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.spark .area {
+  fill: var(--accent);
+  opacity: 0.14;
+}
+
+.spark .line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.spark .head-dot {
+  fill: var(--accent);
+}
+
+/* The meter sits on a full-width rule — the ledger motif from the app icon. */
+.meter {
+  height: 7px;
+  border-radius: 4px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.meter > i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: width 260ms ease;
+}
+
+.meter > i.hot {
+  background: var(--hot);
+}
+
+.caption {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+  margin-top: 7px;
+  letter-spacing: -0.01em;
+}
+
+/* ------------------------------------------------- secondary window rows */
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 8px;
+  align-items: baseline;
+  padding: 9px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.row-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-pct {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-pct.dim {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--faint);
+}
+
+.row-meter {
+  grid-column: 1 / -1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--track);
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.row-meter > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.row-meter > i.hot {
+  background: var(--hot);
+}
+
+.row-caption {
+  grid-column: 1 / -1;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+  margin-top: 5px;
+}
+
+/* ---------------------------------------------------------------- footer */
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+  margin: 12px 0 6px;
+}
+
+.rule {
+  height: 1px;
+  background: var(--rule);
+  margin: 2px -15px 6px;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  padding: 7px 8px;
+  border-radius: 7px;
+  cursor: default;
+}
+
+.menu-item:hover {
+  background: var(--hover);
+}
+
+.menu-item.quiet {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.mi-mark {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  display: block;
+}
+
+.hint {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.state-note {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.state-note code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 1px 4px;
+}

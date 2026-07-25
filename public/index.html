@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claude Ledger</title>
+    <link rel="icon" type="image/svg+xml" href="./logo.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="drag-strip" aria-hidden="true"></div>
+    <div class="chart-tip" id="chart-tip" role="status" aria-live="polite" hidden></div>
+
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <img class="brand-mark" src="./logo.svg" width="34" height="34" alt="" />
+          <div>
+            <div class="brand-name">Ledger</div>
+            <div class="brand-sub">for Claude</div>
+          </div>
+        </div>
+
+        <nav class="nav" id="nav">
+          <a href="#limits-top" class="is-active">Limits</a>
+          <a href="#overview">Overview</a>
+          <a href="#activity">Activity &amp; streaks</a>
+          <a href="#tokens">Tokens &amp; models</a>
+          <a href="#workload">Workload mix</a>
+          <a href="#tools">Tools &amp; skills</a>
+          <a href="#sessions">Sessions</a>
+          <a href="#projects">Projects</a>
+          <a href="#feed">Recent activity</a>
+          <a href="#achievements">Achievements</a>
+        </nav>
+
+        <div class="sidebar-foot">
+          <div id="account-card" class="account-card is-loading">
+            <div class="account-status">Checking your Claude account…</div>
+          </div>
+          <div class="source-note" id="source-note"></div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="page-head">
+          <div>
+            <h1>Your Claude ledger</h1>
+            <div class="page-sub" id="page-sub">Reading your local Claude Code history…</div>
+          </div>
+          <div class="range-switch" id="range-switch" role="tablist" aria-label="Time range"></div>
+        </header>
+
+        <div class="banner" id="banner" hidden></div>
+
+        <section id="limits-top" class="section">
+          <div class="limit-strip" id="limit-strip"></div>
+          <p class="section-note" id="limits-note"></p>
+        </section>
+
+
+
+        <section id="overview" class="section">
+          <div class="stat-grid" id="stat-grid"></div>
+        </section>
+
+        <section id="activity" class="section">
+          <h2>Activity &amp; streaks</h2>
+          <div class="activity-grid">
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title" id="heatmap-title">Daily activity</div>
+                <div class="heat-legend">
+                  Less
+                  <span class="heat-key" data-l="0"></span>
+                  <span class="heat-key" data-l="1"></span>
+                  <span class="heat-key" data-l="2"></span>
+                  <span class="heat-key" data-l="3"></span>
+                  <span class="heat-key" data-l="4"></span>
+                  More
+                </div>
+              </div>
+              <div class="heatmap">
+                <div class="heat-daylabels"><span>Mon</span><span>Wed</span><span>Fri</span></div>
+                <div class="heat-cols" id="heat-cols"></div>
+              </div>
+              <div class="heat-months" id="heat-months"></div>
+            </div>
+
+            <div class="activity-side">
+              <div class="streak-card">
+                <div class="streak-label">Current streak</div>
+                <div class="streak-value" id="streak-value">0<span> days</span></div>
+                <div class="streak-sub" id="streak-sub"></div>
+              </div>
+              <div class="card mini-grid" id="activity-stats"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="tokens" class="section">
+          <h2>Tokens &amp; models</h2>
+          <div class="tokens-grid">
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">Token flow — <span id="trend-range"></span></div>
+                <div class="chart-tools">
+                  <button class="chip chart-reset" id="trend-reset" type="button" hidden
+                          title="Double-click the chart to reset too">Reset zoom</button>
+                  <div class="series-toggle" id="series-toggle" role="group"
+                       aria-label="Series shown on the chart"></div>
+                </div>
+              </div>
+              <svg
+                id="trend-chart"
+                viewBox="0 0 640 190"
+                preserveAspectRatio="none"
+                class="trend-chart"
+                role="img"
+                aria-label="Input and output tokens over time"
+              ></svg>
+              <div class="trend-labels" id="trend-labels"></div>
+              <div class="table-note" id="trend-note"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Model mix — <span id="mix-range"></span></div>
+              <div class="donut-row">
+                <div class="donut-wrap">
+                  <div class="donut" id="donut"></div>
+                  <div class="donut-hole">
+                    <div class="donut-value" id="donut-total">0</div>
+                    <div class="donut-label">messages</div>
+                  </div>
+                </div>
+                <div class="donut-legend" id="donut-legend"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card table-card">
+            <div class="table model-table">
+              <div class="tr th">
+                <div>Model</div>
+                <div class="num">Msgs</div>
+                <div class="num">Tokens in</div>
+                <div class="num">Tokens out</div>
+                <div class="num">Avg out</div>
+                <div class="num">API-equiv.</div>
+                <div>Share</div>
+              </div>
+              <div id="model-rows"></div>
+            </div>
+            <div class="table-note" id="pricing-note" hidden></div>
+          </div>
+        </section>
+
+        <section id="workload" class="section">
+          <h2>Workload mix</h2>
+          <p class="section-note">
+            Derived from your transcripts. Claude Code is the only surface with local history —
+            chat, Design, and mobile usage aren't exposed by any account API, so they're not
+            invented here.
+          </p>
+          <div class="workload-grid" id="workload-grid"></div>
+        </section>
+
+        <section id="tools" class="section">
+          <h2>Tools &amp; skills</h2>
+          <div class="card tools-card" id="tools-card"></div>
+        </section>
+
+        <section id="sessions" class="section">
+          <h2>Sessions</h2>
+          <div class="sessions-grid">
+            <div class="card mini-grid" id="session-stats"></div>
+            <div class="card">
+              <div class="card-title">When you talk to Claude</div>
+              <div class="hour-bars" id="hour-bars"></div>
+              <div class="hour-axis">
+                <span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>11p</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="projects" class="section">
+          <h2>Projects &amp; sessions</h2>
+          <div class="card table-card">
+            <div class="table project-table">
+              <div class="tr th" id="project-head">
+                <button type="button" class="sort" data-sort="name">Project</button>
+                <div>Top model</div>
+                <button type="button" class="sort num" data-sort="sessions">Sessions</button>
+                <button type="button" class="sort num" data-sort="messages">Msgs</button>
+                <button type="button" class="sort num" data-sort="tokensRaw">Tokens</button>
+                <button type="button" class="sort num" data-sort="costRaw">API-equiv.</button>
+                <button type="button" class="sort num" data-sort="lastTs">Last active</button>
+              </div>
+              <div id="project-rows"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="feed" class="section">
+          <h2>Recent activity</h2>
+          <div class="card feed-card" id="feed-card"></div>
+        </section>
+
+        <section id="achievements" class="section">
+          <h2>Achievements</h2>
+          <div class="badge-grid" id="badge-grid"></div>
+        </section>
+
+      </main>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

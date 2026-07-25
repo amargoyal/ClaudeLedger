@@ -1,0 +1,82 @@
+{
+  "name": "claude-ledger",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mac dashboard for your Claude Code usage, authenticated with your Claude account (no API key).",
+  "author": "Amar Goyal",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "serve": "node server.js",
+    "start": "electron .",
+    "icon": "node scripts/make-icon.mjs",
+    "dist": "npm run icon && electron-builder --mac dmg",
+    "dist:unpacked": "npm run icon && electron-builder --mac dir"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.amargoyal.claudeledger",
+    "productName": "Claude Ledger",
+    "copyright": "Copyright © 2026 Amar Goyal",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "public/**/*",
+      "server.js",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "darkModeSupport": false,
+      "extendInfo": {
+        "NSHumanReadableCopyright": "Copyright © 2026 Amar Goyal"
+      },
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null
+    },
+    "dmg": {
+      "title": "Claude Ledger ${version}",
+      "backgroundColor": "#f6f1e8",
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 150,
+          "y": 190,
+          "type": "file"
+        },
+        {
+          "x": 390,
+          "y": 190,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}

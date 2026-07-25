@@ -1,0 +1,1432 @@
+/* Claude Ledger — palette and type lifted from the Ledger design. */
+:root {
+  --paper: #f6f1e8;
+  --card: #fffdf8;
+  --line: #e8e0d2;
+  --line-soft: #f1eadd;
+  --line-strong: #e1d8c6;
+  --ink: #29241d;
+  --ink-2: #57503f;
+  --ink-3: #7c7365;
+  --ink-4: #9a9080;
+  --chip: #ede6d8;
+  --track: #efe8da;
+  --accent: oklch(0.6 0.13 45);
+  --accent-deep: oklch(0.45 0.13 45);
+  --accent-dark: oklch(0.55 0.14 45);
+  --green: oklch(0.6 0.1 155);
+  --green-deep: oklch(0.55 0.11 155);
+  --serif: 'Source Serif 4', ui-serif, Georgia, serif;
+  --sans: 'IBM Plex Sans', ui-sans-serif, -apple-system, system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --shadow: 0 1px 2px rgba(60, 50, 35, 0.05);
+  --radius: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* `hidden` is only a UA `display: none` and loses to any author `display` rule.
+   Nothing toggled with `hidden` sets one today; this keeps it that way. */
+[hidden] {
+  display: none !important;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Electron uses a hidden inset title bar; this strip is the drag handle. */
+.drag-strip {
+  display: none;
+}
+body.is-electron .drag-strip {
+  display: block;
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 28px;
+  z-index: 50;
+  -webkit-app-region: drag;
+}
+body.is-electron .sidebar,
+body.is-electron .main {
+  padding-top: 44px;
+}
+
+h1,
+h2 {
+  font-family: var(--serif);
+  margin: 0;
+}
+
+a {
+  color: var(--accent-deep);
+  text-decoration: none;
+}
+
+.shell {
+  display: flex;
+  min-height: 100vh;
+  align-items: flex-start;
+}
+
+/* ---------------------------------------------------------------- sidebar */
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  width: 212px;
+  flex: 0 0 212px;
+  height: 100vh;
+  padding: 28px 20px;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* The mark is a self-contained SVG (public/logo.svg) that already carries its
+   own rounded tile and gradient — no background or type styling needed here. */
+.brand-mark {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  display: block;
+}
+
+.brand-name {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1.1;
+}
+
+.brand-sub {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13.5px;
+}
+
+.nav a {
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--ink-2);
+  transition: background 120ms ease;
+}
+
+.nav a:hover {
+  background: var(--chip);
+}
+
+.nav a.is-active {
+  color: var(--ink);
+  font-weight: 600;
+  background: var(--chip);
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.account-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.account-card.is-connected {
+  border-color: color-mix(in oklab, var(--green) 40%, var(--line));
+}
+
+.account-card.is-problem {
+  border-color: color-mix(in oklab, var(--accent-dark) 45%, var(--line));
+  background: #fdf4ee;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--ink-4);
+}
+
+.dot.ok {
+  background: var(--green-deep);
+}
+.dot.warn {
+  background: var(--accent-dark);
+}
+
+.account-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-meta {
+  color: var(--ink-3);
+  margin-top: 3px;
+  word-break: break-word;
+}
+
+.plan-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--accent);
+  color: #fffdf8;
+  margin-top: 6px;
+}
+
+.btn {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--line-strong);
+  background: var(--card);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  margin-top: 8px;
+  width: 100%;
+}
+
+.btn:hover {
+  background: var(--chip);
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fffdf8;
+}
+
+.btn.primary:hover {
+  background: var(--accent-dark);
+}
+
+.btn[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.source-note {
+  font-size: 11px;
+  color: var(--ink-4);
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------------- main */
+
+.main {
+  flex: 1;
+  min-width: 0;
+  max-width: 1180px;
+  padding: 28px 36px 72px;
+}
+
+/* Pinned so the title and the range switch stay reachable while scrolling. The
+   negative side margins let the background span the main column's padding,
+   otherwise content shows through beside the header as it scrolls under. */
+.page-head {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 -36px 24px;
+  padding: 4px 36px 12px;
+  background: var(--paper);
+  border-bottom: 1px solid transparent;
+  flex-wrap: wrap;
+  transition: border-color 140ms ease;
+}
+
+body.is-scrolled .page-head {
+  border-bottom-color: var(--line);
+}
+
+@media (max-width: 760px) {
+  .page-head {
+    margin: 0 -18px 20px;
+    padding: 4px 18px 12px;
+  }
+}
+
+.page-head h1 {
+  font-size: 30px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.page-sub {
+  font-size: 13.5px;
+  color: var(--ink-3);
+}
+
+.range-switch {
+  display: flex;
+  gap: 4px;
+  background: var(--chip);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 4px;
+}
+
+.range-switch button {
+  border: none;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-3);
+}
+
+.range-switch button.is-active {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(60, 50, 35, 0.15);
+}
+
+.section {
+  margin-bottom: 36px;
+  scroll-margin-top: 24px;
+}
+
+.section h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.section-note {
+  font-size: 12.5px;
+  color: var(--ink-3);
+  margin: -4px 0 12px;
+  max-width: 76ch;
+  line-height: 1.5;
+}
+
+.banner {
+  border: 1px solid color-mix(in oklab, var(--accent-dark) 40%, var(--line));
+  background: #fdf4ee;
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin-bottom: 24px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.banner code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--chip);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.card-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------- stat cards */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.stat {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 20px 14px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+
+.stat-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.stat-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.stat-delta {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-4);
+}
+
+.stat-delta.up {
+  color: var(--green-deep);
+}
+.stat-delta.down {
+  color: var(--accent-dark);
+}
+
+.stat-mid {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.stat-value {
+  font-family: var(--mono);
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.stat-value span {
+  font-size: 14px;
+  color: var(--ink-4);
+  font-weight: 500;
+}
+
+.stat-spark {
+  width: 96px;
+  max-width: 40%;
+  height: 28px;
+  flex: 0 1 auto;
+}
+
+.stat-sub {
+  font-size: 12px;
+  color: var(--ink-4);
+  margin-top: 8px;
+}
+
+/* ---------------------------------------------------------------- heatmap */
+
+.activity-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+  gap: 14px;
+}
+
+.heat-legend {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+.heat-key {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.heat-key[data-l='0'] {
+  background: var(--track);
+}
+.heat-key[data-l='1'] {
+  background: oklch(0.6 0.13 45 / 0.3);
+}
+.heat-key[data-l='2'] {
+  background: oklch(0.6 0.13 45 / 0.55);
+}
+.heat-key[data-l='3'] {
+  background: oklch(0.6 0.13 45 / 0.8);
+}
+.heat-key[data-l='4'] {
+  background: var(--accent-dark);
+}
+
+.heatmap {
+  display: flex;
+  gap: 8px;
+}
+
+.heat-daylabels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--ink-4);
+  padding: 1px 0;
+  width: 26px;
+  flex: 0 0 26px;
+}
+
+/* Flexible columns so the grid spans the card. Fixed 11px cells left a wide dead
+   gap on the left and made aligning the month labels guesswork. JS sets
+   grid-template-columns to one track per week. */
+.heat-cols {
+  display: grid;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.heat-col {
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  gap: 3px;
+}
+
+.heat-cell {
+  width: auto;
+  height: auto;
+  aspect-ratio: 1;
+  border-radius: 3px;
+  max-height: 22px;
+}
+
+.heat-cell:hover {
+  outline: 1.5px solid var(--ink-3);
+  outline-offset: 1px;
+}
+
+/* A grid matching the heatmap's own columns, so each label can be placed in the
+   week its month actually begins. Was a flex row with evenly-spread labels. */
+.heat-months {
+  display: grid;
+  gap: 3px;
+  font-size: 10.5px;
+  color: var(--ink-4);
+  margin-top: 8px;
+  padding-left: 34px;
+}
+
+.heat-months span {
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.activity-side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.streak-card {
+  background: var(--accent);
+  color: #fff6ee;
+  border-radius: var(--radius);
+  padding: 18px 20px;
+}
+
+.streak-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.streak-value {
+  font-family: var(--mono);
+  font-size: 36px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.streak-value span {
+  font-size: 16px;
+  opacity: 0.8;
+}
+
+.streak-sub {
+  font-size: 12px;
+  opacity: 0.85;
+  margin-top: 4px;
+}
+
+.mini-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-content: center;
+  padding: 16px 20px;
+}
+
+.mini-label {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.mini-value {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.mini-value small {
+  font-size: 11px;
+  color: var(--ink-4);
+  font-weight: 500;
+}
+
+/* ------------------------------------------------------------ token flow */
+
+.tokens-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.chart-legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.swatch {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.swatch-in {
+  background: var(--accent);
+}
+.swatch-out {
+  background: var(--green);
+}
+
+.trend-chart {
+  width: 100%;
+  height: 190px;
+  display: block;
+}
+
+/* Labels are absolutely placed at their point's real time (see app.js). A flex row
+   gave every bucket an equal share, so with 60 buckets each label had ~12px and
+   rendered clipped ("7:." instead of "7:00"). */
+.trend-labels {
+  position: relative;
+  height: 14px;
+  font-size: 10.5px;
+  color: var(--ink-4);
+  margin-top: 6px;
+}
+
+.trend-labels span {
+  position: absolute;
+  top: 0;
+  white-space: nowrap;
+}
+
+.donut-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 14px;
+}
+
+.donut-wrap {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  flex: 0 0 auto;
+}
+
+.donut {
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  background: var(--track);
+}
+
+.donut-hole {
+  position: absolute;
+  inset: 16px;
+  border-radius: 50%;
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.donut-value {
+  font-family: var(--mono);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.donut-label {
+  font-size: 10px;
+  color: var(--ink-4);
+}
+
+.donut-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+.legend-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legend-pct {
+  font-family: var(--mono);
+  color: var(--ink-3);
+  margin-left: auto;
+}
+
+/* ----------------------------------------------------------------- tables */
+
+.table-card {
+  padding: 8px 20px 14px;
+  overflow-x: auto;
+}
+
+.table {
+  min-width: 640px;
+}
+
+.tr {
+  display: grid;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 13px;
+}
+
+.tr.th {
+  padding: 12px 0 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.model-table .tr {
+  grid-template-columns: 1.5fr 0.7fr 1fr 1fr 0.8fr 0.9fr 1.2fr;
+}
+
+.project-table .tr {
+  grid-template-columns: 1.7fr 0.95fr 0.7fr 0.6fr 0.6fr 0.8fr 0.8fr 0.9fr;
+}
+
+.num {
+  text-align: right;
+  font-family: var(--mono);
+}
+
+.tr.th .num {
+  font-family: var(--sans);
+}
+
+.cell-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.cell-name span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.muted {
+  color: var(--ink-3);
+}
+
+.table-note {
+  font-size: 11.5px;
+  color: var(--ink-4);
+  padding-top: 10px;
+}
+
+.tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 20px;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------- workload */
+
+.workload-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.workload-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.workload-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.workload-name {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.workload-pct {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.workload-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.workload-rows > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workload-rows b {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ----------------------------------------------------------------- tools */
+
+.tools-card {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 8px 40px;
+}
+
+.tool-row {
+  display: grid;
+  grid-template-columns: 130px 1fr 52px;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0;
+}
+
+.tool-name {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.tool-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+}
+
+.tool-count {
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: right;
+  color: var(--ink-2);
+}
+
+/* -------------------------------------------------------------- sessions */
+
+.sessions-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.hour-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 80px;
+  margin-top: 12px;
+}
+
+.hour-bars > div {
+  flex: 1;
+  border-radius: 3px 3px 0 0;
+}
+
+.hour-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  color: var(--ink-4);
+  margin-top: 6px;
+}
+
+/* ------------------------------------------------------------------ feed */
+
+.feed-card {
+  padding: 6px 20px;
+}
+
+.feed-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.feed-row:last-child {
+  border-bottom: none;
+}
+
+.feed-row .tag {
+  flex: 0 0 auto;
+  min-width: 46px;
+  text-align: center;
+}
+
+.feed-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.feed-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.feed-meta {
+  font-size: 11.5px;
+  color: var(--ink-4);
+}
+
+.feed-time {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  flex: 0 0 auto;
+}
+
+/* ---------------------------------------------------------------- badges */
+
+.badge-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.badge {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.badge.locked {
+  background: #f2ede2;
+  opacity: 0.62;
+}
+
+.badge-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  flex: 0 0 auto;
+  background: oklch(0.6 0.13 45 / 0.15);
+  color: var(--accent-deep);
+}
+
+.badge.locked .badge-icon {
+  background: #e3dac8;
+  color: var(--ink-4);
+}
+
+.badge-name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.badge-desc {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* ---------------------------------------------------------------- limits */
+
+.limits-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.limit-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+}
+
+/* A window the API lists but doesn't populate for this plan. */
+.limit-card.is-unreported {
+  background: #f2ede2;
+  opacity: 0.7;
+}
+
+.limit-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 10px;
+  gap: 8px;
+}
+
+.limit-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.limit-pct {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.limit-track {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--track);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.limit-track > i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+}
+
+.limit-sub {
+  font-size: 11.5px;
+  color: var(--ink-4);
+}
+
+/* Sized by app.js so the last section can scroll up to the nav detection line. */
+.scroll-spacer {
+  pointer-events: none;
+}
+
+.empty-note {
+  color: var(--ink-3);
+  font-size: 13px;
+  padding: 16px 0;
+}
+
+/* ------------------------------------------------------------ responsive */
+
+@media (max-width: 1080px) {
+  .stat-grid,
+  .limits-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .workload-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .badge-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .activity-grid,
+  .tokens-grid,
+  .sessions-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .shell {
+    flex-direction: column;
+  }
+  .sidebar {
+    position: static;
+    width: 100%;
+    flex: none;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .main {
+    padding: 20px 18px 56px;
+  }
+  .stat-grid,
+  .workload-grid,
+  .badge-grid,
+  .limits-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+
+/* ============================================================ limits at top */
+
+.limit-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.limit-figure {
+  font-family: var(--mono);
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.05;
+  margin: 2px 0 9px;
+}
+
+.limit-figure span {
+  font-size: 16px;
+  color: var(--ink-4);
+}
+
+.limit-none {
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-4);
+}
+
+/* Marks the window that is currently accruing. */
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 3px oklch(0.60 0.13 45 / 0.18);
+}
+
+.limit-head {
+  align-items: center;
+}
+
+
+/* ============================================== focus, sorting, hover readout */
+
+/* Keyboard focus was entirely invisible before this. */
+:where(a, button, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.sort {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sort.num {
+  text-align: right;
+}
+
+.sort:hover {
+  color: var(--ink);
+}
+
+.sort.is-sorted {
+  color: var(--ink);
+}
+
+.sort.is-sorted::after {
+  content: '';
+  display: inline-block;
+  margin-left: 4px;
+  border-left: 3.5px solid transparent;
+  border-right: 3.5px solid transparent;
+}
+
+.sort.is-sorted[aria-sort='descending']::after {
+  border-top: 4px solid currentColor;
+}
+
+.sort.is-sorted[aria-sort='ascending']::after {
+  border-bottom: 4px solid currentColor;
+}
+
+.chart-tip {
+  position: fixed;
+  z-index: 100;
+  pointer-events: none;
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(60, 50, 35, 0.16);
+  padding: 8px 11px;
+  font-size: 12px;
+  min-width: 132px;
+}
+
+.tip-title {
+  font-weight: 600;
+  margin-bottom: 5px;
+}
+
+.tip-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-2);
+  line-height: 1.7;
+}
+
+.tip-row b {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.trend-chart {
+  cursor: crosshair;
+}
+
+
+/* ========================================================= series toggles */
+
+.series-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+/* Keeps the zoom reset beside the series chips instead of letting card-head's
+   space-between push it into the middle of the row. */
+.chart-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chart-reset {
+  color: var(--ink);
+  border-color: var(--ink-4);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-3);
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 4px 10px 4px 8px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.chip:hover {
+  background: var(--chip);
+  color: var(--ink);
+}
+
+.chip.is-on {
+  color: var(--ink);
+  background: var(--chip);
+  border-color: var(--ink-4);
+}
+
+/* Off state reads as an outline; on state fills. */
+.chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--dot, var(--ink-4));
+}
+
+/* Hollow when the series is hidden, filled with its own colour when shown. */
+.chip:not(.is-on) .chip-dot {
+  box-shadow: inset 0 0 0 1.5px var(--ink-4);
+  background-image: none;
+  background-color: transparent;
+}

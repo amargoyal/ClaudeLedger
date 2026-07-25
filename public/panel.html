@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Claude Ledger</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&family=IBM+Plex+Mono:wght@500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./panel.css" />
+  </head>
+  <body>
+    <main class="panel" id="panel">
+      <header class="head">
+        <img class="mark" src="./logo.svg" width="20" height="20" alt="" />
+        <span class="wordmark">Ledger</span>
+        <span class="pill" id="plan" hidden></span>
+        <div class="actions">
+          <button class="icon-btn" id="btn-refresh" title="Refresh" aria-label="Refresh">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M13.5 8a5.5 5.5 0 1 1-1.8-4.1" />
+              <path d="M13.7 2.4v3.3h-3.3" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="alert" id="alert" hidden></div>
+
+      <!-- The active window gets the display treatment; the rest are compact. -->
+      <section class="primary" id="primary" hidden>
+        <div class="eyebrow" id="primary-label"></div>
+        <div class="primary-body">
+          <div class="primary-figure" id="primary-value"></div>
+          <svg class="spark" id="spark" viewBox="0 0 88 34" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </div>
+        <div class="meter"><i id="primary-fill"></i></div>
+        <div class="caption" id="primary-reset"></div>
+      </section>
+
+      <section id="rows"></section>
+
+      <div class="foot">
+        <span id="updated"></span>
+        <span class="foot-dot" id="source" hidden></span>
+      </div>
+
+      <div class="rule"></div>
+
+      <button class="menu-item" id="btn-open">
+        <img class="mi-mark" src="./logo.svg" width="14" height="14" alt="" />
+        <span>Open Ledger</span>
+        <span class="hint">↗</span>
+      </button>
+      <button class="menu-item quiet" id="btn-quit">Quit</button>
+    </main>
+
+    <script src="./panel.js"></script>
+  </body>
+</html>
