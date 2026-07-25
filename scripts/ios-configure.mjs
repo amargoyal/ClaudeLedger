@@ -133,9 +133,26 @@ if (existsSync(splashDir)) {
   console.log('Splash images written');
 }
 
-// ------------------------------------------------------------------ reminder
+// -------------------------------------------------------------------- version
 
+/*
+ * Capacitor scaffolds the project at 1.0 and never touches it again, so without
+ * this the iOS build silently reports a different version from the Mac one
+ * forever. package.json is the single source of truth for both.
+ */
 const project = join(ROOT, 'ios', 'App', 'App.xcodeproj', 'project.pbxproj');
-if (existsSync(project) && readFileSync(project, 'utf8').includes('DEVELOPMENT_TEAM = ""')) {
-  console.log('\nNext: open Xcode, pick your Apple ID under Signing & Capabilities, then run to your phone.');
+if (existsSync(project)) {
+  const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
+  const before = readFileSync(project, 'utf8');
+  const after = before.replace(/MARKETING_VERSION = [^;]+;/g, `MARKETING_VERSION = ${version};`);
+  if (after !== before) {
+    writeFileSync(project, after);
+    console.log(`MARKETING_VERSION set to ${version}`);
+  }
+
+  if (after.includes('DEVELOPMENT_TEAM = ""')) {
+    console.log(
+      '\nNext: open Xcode, pick your Apple ID under Signing & Capabilities, then run to your phone.',
+    );
+  }
 }

@@ -99,7 +99,7 @@ Network down? Every panel except *Usage limits* still renders.
 
 ## Install
 
-Download `ClaudeLedger-1.0.0-arm64.dmg` from
+Download `ClaudeLedger-1.0.1-arm64.dmg` from
 [Releases](../../releases/latest), open it, drag **Claude Ledger** to Applications.
 
 Or build it yourself:
@@ -107,7 +107,7 @@ Or build it yourself:
 ```sh
 git clone <this repo> && cd ClaudeLedger
 npm install          # approve electron's postinstall if npm asks
-npm run dist         # builds dist/ClaudeLedger-1.0.0-arm64.dmg
+npm run dist         # builds dist/ClaudeLedger-1.0.1-arm64.dmg
 ```
 
 > [!IMPORTANT]
