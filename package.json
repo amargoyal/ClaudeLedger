@@ -28,6 +28,7 @@
       "output": "dist",
       "buildResources": "build"
     },
+    "afterPack": "scripts/adhoc-sign.cjs",
     "files": [
       "electron/**/*",
       "src/**/*",
@@ -55,6 +56,7 @@
       "identity": null
     },
     "dmg": {
+      "artifactName": "ClaudeLedger-${version}-${arch}.dmg",
       "title": "Claude Ledger ${version}",
       "backgroundColor": "#f6f1e8",
       "window": {
