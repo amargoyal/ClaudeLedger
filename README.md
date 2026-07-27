@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  A macOS dashboard, a menu bar item, and an iPhone app for your Claude Code usage.<br>
+  A macOS and Windows dashboard, a menu bar item, and an iPhone app for your Claude Code usage.<br>
   Signs in with <strong>your Claude account</strong> — no API key, no token pasting, no password prompt.
 </p>
 
@@ -18,6 +18,7 @@
   <a href="https://github.com/Amar-Goyal8/ClaudeLedger/stargazers"><img src="https://img.shields.io/github/stars/Amar-Goyal8/ClaudeLedger?style=flat&labelColor=29241D&color=BE6438" alt="Stars"></a>
   <a href="https://github.com/Amar-Goyal8/ClaudeLedger/releases/latest"><img src="https://img.shields.io/github/v/release/Amar-Goyal8/ClaudeLedger?style=flat&labelColor=29241D&color=BE6438&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/macOS-Apple%20silicon-7C7365?style=flat&labelColor=29241D" alt="macOS, Apple silicon">
+  <img src="https://img.shields.io/badge/Windows-x64%20%C2%B7%20ARM64-7C7365?style=flat&labelColor=29241D" alt="Windows, x64 and ARM64">
   <img src="https://img.shields.io/badge/auth-your%20Claude%20account-7C7365?style=flat&labelColor=29241D" alt="Authenticates with your Claude account">
   <img src="https://img.shields.io/badge/network-api.anthropic.com%20only-7C7365?style=flat&labelColor=29241D" alt="Only talks to api.anthropic.com">
 </p>
@@ -99,19 +100,27 @@ Network down? Every panel except *Usage limits* still renders.
 
 ## Install
 
-Download `ClaudeLedger-1.0.1-arm64.dmg` from
+**macOS** — download `ClaudeLedger-1.1.0-arm64.dmg` from
 [Releases](../../releases/latest), open it, drag **Claude Ledger** to Applications.
+
+**Windows** — download `ClaudeLedger-1.1.0-setup.exe` from the same place and run it. It
+carries both x64 and ARM64, installs for your user only, and needs no admin prompt. See
+[First launch on Windows](#first-launch-on-windows) below — SmartScreen blocks it once.
 
 Or build it yourself:
 
 ```sh
 git clone <this repo> && cd ClaudeLedger
 npm install          # approve electron's postinstall if npm asks
-npm run dist         # builds dist/ClaudeLedger-1.0.1-arm64.dmg
+npm run dist         # macOS   -> dist/ClaudeLedger-1.1.0-arm64.dmg
+npm run dist:win     # Windows -> dist/ClaudeLedger-1.1.0-setup.exe
 ```
 
+Both targets build from either host: electron-builder fetches the Windows toolchain itself,
+so a Mac produces the installer without a Windows machine in the loop.
+
 > [!IMPORTANT]
-> **First launch needs one extra step.** The app is ad-hoc signed but not notarized — there
+> **First launch on macOS needs one extra step.** The app is ad-hoc signed but not notarized — there
 > is no Apple Developer ID on the build machine — so Gatekeeper blocks a plain double-click.
 >
 > 1. Double-click **Claude Ledger**. macOS refuses and says it can't verify the developer.
@@ -123,6 +132,20 @@ npm run dist         # builds dist/ClaudeLedger-1.0.1-arm64.dmg
 > Once approved it launches normally forever after. Right-click → **Open** → **Open** also
 > works on older macOS, but on recent versions the Settings route is the one that reliably
 > offers the bypass.
+
+<h3 id="first-launch-on-windows">First launch on Windows</h3>
+
+The installer is not code-signed — there is no EV certificate on the build machine — so
+SmartScreen blocks the first run of a copy it hasn't seen before:
+
+1. Run `ClaudeLedger-1.1.0-setup.exe`. Windows says *"Windows protected your PC"*.
+2. Click **More info** — the **Run anyway** button is hidden behind that link, which is
+   where people get stuck.
+3. Click **Run anyway**.
+
+If your organization enforces SmartScreen or WDAC the installer may be blocked outright with
+no bypass. That's policy rather than something the app can work around; build it yourself
+with `npm run dist:win`, or ask whoever administers the machine.
 
 > [!TIP]
 > No Claude Code login yet? Run `claude` in a terminal and sign in with your Claude
@@ -299,9 +322,12 @@ drawn as if it were measured when it wasn't.
 
 <img src="docs/assets/menubar.png" alt="Menu bar popover" width="280" align="right">
 
-The app lives in the menu bar as well as the dock. The icon shows your **session window**
-percentage — the limit that actually interrupts work — and clicking it opens a popover with
-every limit the API reports, each with its own reset time.
+The app lives in the menu bar as well as the dock — on Windows, in the notification area.
+The icon shows your **session window** percentage — the limit that actually interrupts work —
+and clicking it opens a popover with every limit the API reports, each with its own reset
+time. On Windows that percentage is in the icon's tooltip instead, since there's no title
+text beside a notification area icon, and the popover opens above the icon rather than
+below it.
 
 - **Left click** — popover. **Right click** — a short menu (Open Dashboard / Refresh / Quit).
 - The popover shows a **sparkline of your recorded session readings** and, when there's
@@ -471,9 +497,16 @@ to work on it: open that in a browser, switch to a phone viewport in devtools, a
 the loopback server and skips pairing entirely.
 
 ```sh
-npm run dist            # regenerates the icon, then builds dist/*.dmg
-npm run dist:unpacked   # .app only, no DMG — faster for testing packaging
+npm run dist              # regenerates the icons, then builds dist/*.dmg
+npm run dist:unpacked     # .app only, no DMG — faster for testing packaging
+npm run dist:win          # x64 + ARM64 NSIS installers
+npm run dist:win:unpacked # unpacked Windows tree only
 ```
+
+The Windows targets build from a Mac: electron-builder downloads the Windows Electron binary,
+wine and NSIS on first use, and `scripts/make-icon.mjs` writes `build/icon.ico` itself rather
+than shelling out, so no image tooling is needed either. `npm run dist:win` emits three files —
+a combined installer plus one per architecture.
 
 <details>
 <summary><strong>Two macOS build details worth knowing, both load-bearing</strong></summary>
@@ -555,8 +588,12 @@ On the shared listener every route above needs `Authorization: Bearer <device to
 
 ## Known limitations
 
-- **Apple silicon only** as configured (`arch: ["arm64"]`). Add `"x64"` to the DMG target for
-  Intel.
+- **The macOS build is Apple silicon only** as configured (`arch: ["arm64"]`). Add `"x64"` to
+  the DMG target for Intel.
+- **Neither build is signed with a purchased certificate.** macOS is ad-hoc signed and not
+  notarized; the Windows installer isn't signed at all, so SmartScreen warns on first run.
+- **On Windows the session figure lives in the tooltip**, not beside the icon: the notification
+  area has no equivalent of the macOS menu bar's title text.
 - **Heatmap, streaks and achievements are always all-time**, independent of the range switch —
   they are lifetime facts and the design presents them that way.
 - **Active time is gap-based**: consecutive messages more than 5 minutes apart don't

@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 export const PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR ?? join(homedir(), '.claude', 'projects');
 
@@ -65,7 +65,9 @@ function isRealPrompt(record) {
 }
 
 function parseFile(text, path) {
-  const project = projectNameFromDir(path.slice(0, path.lastIndexOf('/')));
+  // dirname, not a slice to the last "/": Windows separates with "\", so the slice
+  // returned the whole path there and the project name came out as the filename.
+  const project = projectNameFromDir(dirname(path));
   const assistant = [];
   const prompts = [];
   const titles = [];

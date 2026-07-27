@@ -4,7 +4,8 @@
  * Shapes are signed-distance rounded rectangles evaluated per pixel, encoded via
  * node:zlib. Two consumers:
  *   - scripts/make-icon.mjs  -> the app icon (terracotta tile, cream glyph)
- *   - electron/main.cjs      -> the menu bar icon (black glyph, transparent)
+ *   - electron/main.cjs      -> the tray icon (a template glyph on macOS, a
+ *                               colour tile on Windows/Linux)
  *
  * Glyph coordinates are in a 0..100 space shared with public/logo.svg. Change one,
  * change the other, or the app icon and the in-app mark drift apart.
@@ -87,15 +88,24 @@ function glyphCoverage(shapes, px, py) {
  * for the iOS launch image (a small tile floating on paper).
  *
  * @param {number} size
- * @param {{ inset?: number, radius?: number, background?: [number,number,number]|null }} options
+ * @param {{ inset?: number, radius?: number, background?: [number,number,number]|null,
+ *          glyph?: typeof GLYPH, glyphInset?: number }} options
  *   `background` composites the tile over an opaque colour instead of leaving
  *   transparency, which is what iOS requires of both icons and launch images.
+ *   `glyph`/`glyphInset` let the tray variant swap in the compact mark and pad
+ *   it independently of the tile.
  */
 export function renderAppIcon(
   size,
-  { inset = Math.round(size * 0.09), radius = size * 0.195, background = null } = {},
+  {
+    inset = Math.round(size * 0.09),
+    radius = size * 0.195,
+    background = null,
+    glyph = GLYPH,
+    glyphInset = inset,
+  } = {},
 ) {
-  const shapes = mapShapes(GLYPH, size, inset);
+  const shapes = mapShapes(glyph, size, glyphInset);
   const buf = Buffer.alloc(size * size * 4);
 
   for (let y = 0; y < size; y += 1) {
@@ -159,6 +169,24 @@ export function renderTemplateMark(size) {
     }
   }
   return encodePNG(buf, size);
+}
+
+/**
+ * Tray variant for platforms that do not recolour template images — Windows and
+ * most Linux desktops draw the bitmap as given.
+ *
+ * So it can't be a monochrome glyph: a black mark vanishes on a dark taskbar and
+ * a white one vanishes on a light one. The full-bleed terracotta tile reads on
+ * both. The compact glyph is used for the same reason it exists on the menu bar —
+ * four bars collapse to sub-pixel widths at 16px.
+ */
+export function renderTrayTile(size) {
+  return renderAppIcon(size, {
+    inset: 0,
+    radius: size * 0.22,
+    glyph: GLYPH_COMPACT,
+    glyphInset: Math.round(size * 0.2),
+  });
 }
 
 // --- minimal PNG writer -----------------------------------------------------

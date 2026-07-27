@@ -19,6 +19,12 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 const isDev = !app.isPackaged;
+const isMac = process.platform === 'darwin';
+const isWin = process.platform === 'win32';
+
+// Windows groups taskbar buttons, jump lists and notifications by this id. Without
+// it a packaged build shows up as a generic "electron.app.Electron".
+if (isWin) app.setAppUserModelId('com.amargoyal.claudeledger');
 
 /**
  * Give the dev build its own userData directory.
@@ -82,7 +88,49 @@ function saveTheme(theme) {
   }
 }
 
+/** Window control glyph colour for the Windows overlay, per theme. */
+const SYMBOL = { light: '#29241D', dark: '#F7F3EA' };
+
 const surface = (kind) => SURFACE[kind][nativeTheme.shouldUseDarkColors ? 'dark' : 'light'];
+
+const overlay = (kind) => ({
+  color: surface(kind),
+  symbolColor: SYMBOL[nativeTheme.shouldUseDarkColors ? 'dark' : 'light'],
+  height: 36,
+});
+
+/**
+ * Frameless chrome, per platform.
+ *
+ * macOS keeps the inset traffic lights over a hidden title bar. Windows uses the
+ * Window Controls Overlay: minimise/maximise/close stay native (and stay where a
+ * Windows user reaches for them), while the app paints the rest of the strip, so
+ * the same `.drag-strip` handle works on both. Elsewhere, take the normal frame.
+ * @param {'window'|'panel'|'pair'} kind which surface colour the bar should match
+ * @param {number} inset traffic light offset, macOS only
+ */
+function chromeOptions(kind, inset) {
+  if (isMac) {
+    return { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: inset, y: inset } };
+  }
+  if (isWin) {
+    // The menu bar would otherwise render as a strip inside the frameless window;
+    // Alt still summons it.
+    return { titleBarStyle: 'hidden', titleBarOverlay: overlay(kind), autoHideMenuBar: true };
+  }
+  return {};
+}
+
+/**
+ * Window icon for platforms that don't get one from the bundle. Only present
+ * after `npm run icon`, and only used unpackaged — a packaged Windows build takes
+ * its icon from the executable.
+ */
+function windowIcon() {
+  if (isMac) return {};
+  const file = path.join(__dirname, '..', 'build', 'icon.png');
+  return fs.existsSync(file) ? { icon: file } : {};
+}
 
 /**
  * Point every native surface at the chosen theme.
@@ -98,9 +146,18 @@ function setTheme(theme) {
 }
 
 function applySurfaces() {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBackgroundColor(surface('window'));
-  if (panel && !panel.isDestroyed()) panel.setBackgroundColor(surface('panel'));
-  if (pairWindow && !pairWindow.isDestroyed()) pairWindow.setBackgroundColor(surface('pair'));
+  paint(mainWindow, 'window');
+  paint(panel, 'panel');
+  paint(pairWindow, 'pair');
+}
+
+/** Repaint one window's native background — and, on Windows, its control overlay. */
+function paint(win, kind) {
+  if (!win || win.isDestroyed()) return;
+  win.setBackgroundColor(surface(kind));
+  // The overlay is drawn by the OS, so it does not follow the page's CSS: left
+  // alone it keeps the light bar behind the buttons after a switch to dark.
+  if (isWin && kind !== 'panel') win.setTitleBarOverlay(overlay(kind));
 }
 
 function readWindowState() {
@@ -162,8 +219,8 @@ function createWindow(port) {
     minHeight: 640,
     show: false,
     backgroundColor: surface('window'),
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 14 },
+    ...chromeOptions('window', 14),
+    ...windowIcon(),
     webPreferences: {
       // The dashboard renderer only talks to the local HTTP API. The preload adds
       // exactly one call — setting the theme, which needs to reach native surfaces.
@@ -244,6 +301,9 @@ function createPanel(port) {
     skipTaskbar: true,
     hasShadow: true,
     roundedCorners: true,
+    // On Windows the notification area sits on the taskbar, which is itself always
+    // on top: without this the popover opens behind it.
+    alwaysOnTop: !isMac,
     // Deliberately NOT transparent + vibrancy. A translucent popover over an
     // arbitrary desktop has no contrast guarantee — text was genuinely hard to
     // read against busy backdrops. A solid surface that follows the system theme
@@ -266,16 +326,18 @@ function createPanel(port) {
   });
 
   // Keep the native surface in step with the CSS, which follows prefers-color-scheme.
-  nativeTheme.on('updated', () => {
-    if (panel && !panel.isDestroyed()) {
-      panel.setBackgroundColor(surface('panel'));
-    }
-  });
+  nativeTheme.on('updated', () => paint(panel, 'panel'));
 
   return panel;
 }
 
-/** Centre the popover under the tray icon, kept inside the display's work area. */
+/**
+ * Centre the popover on the tray icon, kept inside the display's work area.
+ *
+ * Below the icon when there's room, above it when there isn't — which is what
+ * decides the two real cases without naming them: the macOS menu bar is at the
+ * top of the screen, the Windows notification area is usually at the bottom.
+ */
 function positionPanel() {
   if (!panel || !tray) return;
   const trayBounds = tray.getBounds();
@@ -288,8 +350,12 @@ function positionPanel() {
       work.x + work.width - width - 8,
     ),
   );
-  const y = Math.round(Math.min(trayBounds.y + trayBounds.height + 4, work.y + work.height - height - 8));
-  panel.setPosition(x, y, false);
+  const below = trayBounds.y + trayBounds.height + 4;
+  const y =
+    below + height + 8 <= work.y + work.height
+      ? below
+      : Math.max(work.y + 8, trayBounds.y - height - 4);
+  panel.setPosition(x, Math.round(y), false);
 }
 
 function showPanel() {
@@ -348,8 +414,8 @@ function createPairWindow(port) {
     fullscreenable: false,
     show: false,
     backgroundColor: surface('pair'),
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 12, y: 12 },
+    ...chromeOptions('pair', 12),
+    ...windowIcon(),
     webPreferences: {
       preload: path.join(__dirname, 'preload-pair.cjs'),
       contextIsolation: true,
@@ -363,11 +429,7 @@ function createPairWindow(port) {
   pairWindow.on('closed', () => {
     pairWindow = null;
   });
-  nativeTheme.on('updated', () => {
-    if (pairWindow && !pairWindow.isDestroyed()) {
-      pairWindow.setBackgroundColor(surface('pair'));
-    }
-  });
+  nativeTheme.on('updated', () => paint(pairWindow, 'pair'));
   return pairWindow;
 }
 
@@ -429,16 +491,35 @@ function planLabel(account) {
 }
 
 /**
- * The menu bar title is the session window — the limit that actually interrupts
- * work. Everything else lives in the popover.
+ * The session window — the limit that actually interrupts work. Everything else
+ * lives in the popover.
+ * @returns {string|null} e.g. "62%", or null when there's nothing to show
  */
-function trayTitle(account) {
-  if (account?.status !== 'connected') return ' —';
+function sessionPercent(account) {
+  if (account?.status !== 'connected') return null;
   const session = account.limits?.windows?.find(
     (w) => w.group === 'session' || w.kind === 'session' || w.key === 'five_hour',
   );
-  if (!session || session.utilization == null) return '';
-  return ` ${session.utilization.toFixed(0)}%`;
+  if (!session || session.utilization == null) return null;
+  return `${session.utilization.toFixed(0)}%`;
+}
+
+/** Menu bar title text. macOS only — `setTitle` is a no-op elsewhere. */
+function trayTitle(account) {
+  if (account?.status !== 'connected') return ' —';
+  const pct = sessionPercent(account);
+  return pct ? ` ${pct}` : '';
+}
+
+/**
+ * Tooltip text. On Windows this carries the number as well as the plan: there is
+ * no title beside a notification area icon, so the tooltip is the only place the
+ * session figure can show without opening the popover.
+ */
+function trayTooltip(account) {
+  if (account?.status !== 'connected') return 'Claude Ledger — not connected';
+  const pct = isMac ? null : sessionPercent(account);
+  return `Claude Ledger — ${planLabel(account)}${pct ? ` · session ${pct}` : ''}`;
 }
 
 /** Right-click menu — the popover is the primary surface, this is the shortcut. */
@@ -467,28 +548,39 @@ async function refreshTray({ force = false } = {}) {
   }
 
   if (tray && !tray.isDestroyed()) {
-    tray.setTitle(trayTitle(lastAccount));
-    tray.setToolTip(
-      lastAccount?.status === 'connected'
-        ? `Claude Ledger — ${planLabel(lastAccount)}`
-        : 'Claude Ledger — not connected',
-    );
+    if (isMac) tray.setTitle(trayTitle(lastAccount));
+    tray.setToolTip(trayTooltip(lastAccount));
   }
   return lastAccount;
 }
 
-async function createTray() {
+/**
+ * Build the tray image in memory from the same glyph as the app icon — no separate
+ * asset files to keep in sync.
+ */
+async function trayImage() {
   const mark = await importLocal('src/mark.js');
-  // Built in memory from the same glyph as the app icon — no separate asset files
-  // to keep in sync. Template images are recoloured by macOS for light/dark menu
-  // bars, so only the alpha channel matters.
-  // 18pt rather than the conventional 16pt: the menu bar allows it and the mark
-  // is legible at that size where 16 read as cramped.
-  const image = nativeImage.createFromBuffer(mark.renderTemplateMark(18), { scaleFactor: 1 });
-  image.addRepresentation({ scaleFactor: 2, buffer: mark.renderTemplateMark(36) });
-  image.setTemplateImage(true);
 
-  tray = new Tray(image);
+  if (isMac) {
+    // Template images are recoloured by macOS for light/dark menu bars and for the
+    // highlighted state, so only the alpha channel matters.
+    // 18pt rather than the conventional 16pt: the menu bar allows it and the mark
+    // is legible at that size where 16 read as cramped.
+    const image = nativeImage.createFromBuffer(mark.renderTemplateMark(18), { scaleFactor: 1 });
+    image.addRepresentation({ scaleFactor: 2, buffer: mark.renderTemplateMark(36) });
+    image.setTemplateImage(true);
+    return image;
+  }
+
+  // Windows draws the bitmap as given, so this is the colour tile — see
+  // renderTrayTile. 16px logical, with a 2x representation for scaled displays.
+  const image = nativeImage.createFromBuffer(mark.renderTrayTile(16), { scaleFactor: 1 });
+  image.addRepresentation({ scaleFactor: 2, buffer: mark.renderTrayTile(32) });
+  return image;
+}
+
+async function createTray() {
+  tray = new Tray(await trayImage());
   tray.setIgnoreDoubleClickEvents(true);
   // No setContextMenu: that would make a left click open a menu instead of the
   // popover. Right-click gets the menu explicitly.
@@ -538,11 +630,33 @@ function registerIpc() {
 // ------------------------------------------------------------------ app lifecycle
 
 function buildAppMenu() {
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
-      // Spelled out rather than `{ role: 'appMenu' }` so "Pair a Phone…" can sit
-      // where a Mac user looks for it.
+  const viewMenu = {
+    label: 'View',
+    submenu: [
       {
+        label: 'Refresh Data',
+        accelerator: 'CmdOrCtrl+R',
+        click: () => {
+          mainWindow?.webContents.reload();
+          refreshTray({ force: true });
+        },
+      },
+      { type: 'separator' },
+      { role: 'resetZoom' },
+      { role: 'zoomIn' },
+      { role: 'zoomOut' },
+      { type: 'separator' },
+      { role: 'togglefullscreen' },
+      ...(isDev ? [{ type: 'separator' }, { role: 'toggleDevTools' }] : []),
+    ],
+  };
+
+  // The app menu is spelled out rather than `{ role: 'appMenu' }` so "Pair a
+  // Phone…" can sit where a Mac user looks for it. Windows has no such menu — and
+  // no `about`/`services`/`hide` roles either — so the same items go under File,
+  // which is where a Windows user looks for them.
+  const firstMenu = isMac
+    ? {
         label: app.name,
         submenu: [
           { role: 'about' },
@@ -557,30 +671,18 @@ function buildAppMenu() {
           { type: 'separator' },
           { role: 'quit' },
         ],
-      },
-      {
-        label: 'View',
+      }
+    : {
+        label: 'File',
         submenu: [
-          {
-            label: 'Refresh Data',
-            accelerator: 'CmdOrCtrl+R',
-            click: () => {
-              mainWindow?.webContents.reload();
-              refreshTray({ force: true });
-            },
-          },
+          { label: 'Pair a Phone…', accelerator: 'CmdOrCtrl+P', click: () => openPairWindow() },
           { type: 'separator' },
-          { role: 'resetZoom' },
-          { role: 'zoomIn' },
-          { role: 'zoomOut' },
-          { type: 'separator' },
-          { role: 'togglefullscreen' },
-          ...(isDev ? [{ type: 'separator' }, { role: 'toggleDevTools' }] : []),
+          { role: 'quit', label: 'Quit Claude Ledger' },
         ],
-      },
-      { role: 'editMenu' },
-      { role: 'windowMenu' },
-    ]),
+      };
+
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([firstMenu, viewMenu, { role: 'editMenu' }, { role: 'windowMenu' }]),
   );
 }
 
@@ -619,8 +721,11 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  // macOS keeps running so the menu bar item stays live.
-  if (process.platform !== 'darwin') app.quit();
+  // Keep running so the tray item stays live — the menu bar on macOS, the
+  // notification area on Windows. Both offer "Open Dashboard" and "Quit", so
+  // there's a way back and a way out. If the tray failed to start there is
+  // neither, and a closed window would leave an invisible process behind.
+  if (!isMac && !tray) app.quit();
 });
 
 app.on('before-quit', () => {
