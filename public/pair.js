@@ -121,7 +121,16 @@ function renderQr(code) {
     lastQrPayload = null;
     return;
   }
-  const payload = `claudeledger://pair?host=${encodeURIComponent(host)}&code=${code}`;
+  /*
+   * An http address, not the `claudeledger://` link the app ultimately opens.
+   *
+   * The Camera app offers to open an http URL every time and is unreliable
+   * about custom schemes — often it recognises the code and then does nothing,
+   * which reads as "pairing is broken". So the scan lands on a page this Mac
+   * serves, and that page hands the phone to the app, with a button and a
+   * browser fallback for when it cannot.
+   */
+  const payload = `http://${host}/pair?code=${code}`;
   if (payload === lastQrPayload) return;
   lastQrPayload = payload;
 

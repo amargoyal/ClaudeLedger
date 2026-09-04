@@ -272,11 +272,25 @@ export function createApp({ mode = 'local' } = {}) {
       }
 
       // --------------------------------------------------------------- static
+      /*
+       * Where the pairing QR points. It carries an http address rather than the
+       * `claudeledger://` link itself because the iOS Camera app reliably offers
+       * to open http and is unreliable about custom schemes; this page is what
+       * hands the phone over to the app.
+       */
+      if (url.pathname === '/pair' || url.pathname === '/pair/') {
+        await serveStatic(res, '/pair.html', MOBILE_DIR);
+        return;
+      }
       if (isLan) {
         // A phone gets the phone UI at the root. The desktop dashboard is never
         // served over the network: it assumes an unauthenticated API and a
         // 1320px window, and neither holds here.
         await serveStatic(res, url.pathname, MOBILE_DIR);
+        return;
+      }
+      if (url.pathname === '/m/pair' || url.pathname === '/m/pair/') {
+        await serveStatic(res, '/pair.html', MOBILE_DIR);
         return;
       }
       if (url.pathname === '/m' || url.pathname === '/m/') {
