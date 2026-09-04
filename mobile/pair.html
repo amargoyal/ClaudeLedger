@@ -37,9 +37,16 @@
     <script type="module">
       const params = new URLSearchParams(location.search);
       const code = (params.get('code') ?? '').replace(/\D/g, '').slice(0, 6);
-      // The Mac that served this page is the Mac to pair with, so the address
-      // never has to travel in the QR.
-      const host = params.get('host') ?? location.host;
+      /*
+       * The Mac that served this page is the Mac to pair with, so the address
+       * never has to travel in the QR.
+       *
+       * Over the Cloudflare tunnel the scheme is the load-bearing part — drop it
+       * and the phone rebuilds `http://<tunnel>:4317`, which is not a thing that
+       * exists — so an https page hands over its whole origin.
+       */
+      const host =
+        params.get('host') ?? (location.protocol === 'https:' ? location.origin : location.host);
 
       const appLink = `claudeledger://pair?host=${encodeURIComponent(host)}&code=${code}`;
       const webLink = `/?code=${code}&host=${encodeURIComponent(host)}`;

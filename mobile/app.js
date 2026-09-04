@@ -1938,7 +1938,12 @@ function applyPairLink(url) {
     return false;
   }
   const code = parsed.searchParams.get('code');
-  const host = parsed.searchParams.get('host') ?? (/^https?:$/.test(location.protocol) ? location.host : null);
+  // `location.origin` rather than `location.host`: served over the Cloudflare
+  // tunnel the page is https, and an address without its scheme is rebuilt as
+  // `http://<tunnel>:4317`, which nothing answers.
+  const host =
+    parsed.searchParams.get('host') ??
+    (/^https?:$/.test(location.protocol) ? location.origin : null);
   if (!host) return false;
 
   showConnect({ host });

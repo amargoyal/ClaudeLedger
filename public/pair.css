@@ -104,6 +104,13 @@ body {
   gap: 18px;
 }
 
+/* The second switch reads as a setting of the first, so it is inset under it. */
+.toggle-row + .toggle-row {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+
 .toggle-label {
   font-size: 14px;
   font-weight: 600;

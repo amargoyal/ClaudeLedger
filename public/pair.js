@@ -37,6 +37,43 @@ function activeHost() {
   return `${pick.address}:${state.port}`;
 }
 
+/**
+ * The address to hand the phone, best first.
+ *
+ * The tunnel wins whenever it is up: it is the only one of the two that answers
+ * from cellular, and a phone paired on it keeps working when it leaves the
+ * house. The LAN address is what remains otherwise.
+ */
+function pairOrigin() {
+  const relay = state?.relay;
+  if (relay?.running && relay.origin) return relay.origin;
+  const host = activeHost();
+  return host ? `http://${host}` : null;
+}
+
+function renderRelay() {
+  const relay = state?.relay ?? {};
+  const sw = $('relay-switch');
+  sw.setAttribute('aria-checked', String(Boolean(relay.running)));
+  sw.disabled = !relay.installed;
+
+  $('relay-sub').textContent = !relay.installed
+    ? 'cloudflared isn’t installed. Run “brew install cloudflared”.'
+    : relay.running
+      ? relay.origin
+        ? `On — reachable at ${relay.origin.replace('https://', '')}`
+        : 'Starting…'
+      : 'Off — the phone has to be on this Wi‑Fi.';
+
+  const err = $('relay-error');
+  if (relay.error) {
+    err.hidden = false;
+    err.textContent = relay.error;
+  } else {
+    err.hidden = true;
+  }
+}
+
 function renderShare() {
   const on = Boolean(state?.sharing);
   const sw = $('share-switch');
@@ -85,11 +122,11 @@ function renderCode() {
   const code = $('code');
   const countdown = $('countdown');
 
-  const host = activeHost();
   // The same pairing works in mobile Safari, which is the whole install story for
   // anyone who hasn't built the app in Xcode.
-  $('browser-url').textContent = host
-    ? `http://${host}/${pairing?.active ? `?code=${pairing.code}` : ''}`
+  const origin = pairOrigin();
+  $('browser-url').textContent = origin
+    ? `${origin}/${pairing?.active ? `?code=${pairing.code}` : ''}`
     : '—';
 
   if (!pairing?.active) {
@@ -114,9 +151,9 @@ function renderCode() {
 let lastQrPayload = null;
 
 function renderQr(code) {
-  const host = activeHost();
+  const origin = pairOrigin();
   const box = $('qr-box');
-  if (!host) {
+  if (!origin) {
     clear(box);
     lastQrPayload = null;
     return;
@@ -130,7 +167,7 @@ function renderQr(code) {
    * serves, and that page hands the phone to the app, with a button and a
    * browser fallback for when it cannot.
    */
-  const payload = `http://${host}/pair?code=${code}`;
+  const payload = `${origin}/pair?code=${code}`;
   if (payload === lastQrPayload) return;
   lastQrPayload = payload;
 
@@ -172,6 +209,7 @@ function renderDevices() {
 
 function render() {
   renderShare();
+  renderRelay();
   renderAddresses();
   renderCode();
   renderDevices();
@@ -185,6 +223,21 @@ $('share-switch').addEventListener('click', async () => {
     // Turning sharing on with no code open leaves a pairing panel with nothing to
     // pair against, so open one straight away.
     if (state?.sharing && !state.pairing?.active) state = await api.newCode();
+  } finally {
+    sw.disabled = false;
+  }
+  render();
+});
+
+$('relay-switch').addEventListener('click', async () => {
+  const sw = $('relay-switch');
+  const on = sw.getAttribute('aria-checked') === 'true';
+  sw.disabled = true;
+  // Cloudflare takes a few seconds to hand out an address and a few more to
+  // route to it, and the switch is the only thing on screen that can say so.
+  if (!on) $('relay-sub').textContent = 'Starting — this takes a few seconds…';
+  try {
+    state = await api.setRelay(!on);
   } finally {
     sw.disabled = false;
   }
