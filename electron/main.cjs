@@ -191,6 +191,8 @@ let lanError = null;
 let lanModule = null;
 /** Loaded with the rest; only spawns anything when the relay switch is used. */
 let tunnelModule = null;
+/** Only for its duration formatter; the projections themselves arrive with the account. */
+let burnModule = null;
 let anthropic = null;
 let lastAccount = null;
 
@@ -552,11 +554,33 @@ function sessionPercent(account) {
   return `${session.utilization.toFixed(0)}%`;
 }
 
-/** Menu bar title text. macOS only — `setTitle` is a no-op elsewhere. */
+/**
+ * The session window's own reading of how long it has left, when the readings
+ * support one and it matters.
+ *
+ * Only when the window would run out before it resets. Otherwise the honest
+ * answer is "the window resets first", and printing a duration for that would
+ * turn a fine afternoon into a countdown.
+ */
+function sessionRunway(account) {
+  const projection = account?.projections?.session;
+  if (!projection?.willExhaustBeforeReset) return null;
+  return burnModule ? burnModule.shortDuration(projection.minutesToExhaust) : null;
+}
+
+/**
+ * Menu bar title text. macOS only — `setTitle` is a no-op elsewhere.
+ *
+ * A percentage with no derivative does not answer the question anyone has, which
+ * is whether to start the long thing now. 62% is comfortable four hours into a
+ * window and alarming twenty minutes in.
+ */
 function trayTitle(account) {
   if (account?.status !== 'connected') return ' —';
   const pct = sessionPercent(account);
-  return pct ? ` ${pct}` : '';
+  if (!pct) return '';
+  const runway = sessionRunway(account);
+  return runway ? ` ${pct} · ${runway}` : ` ${pct}`;
 }
 
 /**
@@ -567,7 +591,9 @@ function trayTitle(account) {
 function trayTooltip(account) {
   if (account?.status !== 'connected') return 'Claude Ledger — not connected';
   const pct = isMac ? null : sessionPercent(account);
-  return `Claude Ledger — ${planLabel(account)}${pct ? ` · session ${pct}` : ''}`;
+  const projection = account?.projections?.session;
+  const rate = projection ? ` · ${projection.ratePerHour.toFixed(1)}%/hr` : '';
+  return `Claude Ledger — ${planLabel(account)}${pct ? ` · session ${pct}` : ''}${rate}`;
 }
 
 /** Right-click menu — the popover is the primary surface, this is the shortcut. */
@@ -745,6 +771,7 @@ app.whenReady().then(async () => {
     serverModule = await importLocal('server.js');
     lanModule = await importLocal('src/lan.js');
     tunnelModule = await importLocal('src/tunnel.js');
+    burnModule = await importLocal('src/burn.js');
     // Port 0 = let the OS pick a free port, bound to loopback only.
     serverInfo = await serverModule.startServer({ port: 0, host: '127.0.0.1' });
   } catch (err) {
