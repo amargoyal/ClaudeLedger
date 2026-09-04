@@ -8,6 +8,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('pairing', {
   state: () => ipcRenderer.invoke('pair:state'),
   setSharing: (on) => ipcRenderer.invoke('pair:set-sharing', Boolean(on)),
+  setRelay: (on) => ipcRenderer.invoke('pair:set-relay', Boolean(on)),
   newCode: () => ipcRenderer.invoke('pair:new-code'),
   revoke: (id) => ipcRenderer.invoke('pair:revoke', String(id)),
   close: () => ipcRenderer.send('pair:close'),

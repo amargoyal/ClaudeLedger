@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { fetchAccount, invalidateAccountCache } from './src/anthropic.js';
 import { readConnection } from './src/credentials.js';
-import { buildSnapshot, usageCurve } from './src/aggregate.js';
+import { METRIC_IDS, buildSnapshot, metricSeries, usageCurve } from './src/aggregate.js';
 import { query as queryHistory, span as historySpan } from './src/history.js';
 import { fingerprint, loadEvents } from './src/transcripts.js';
 import {
@@ -235,6 +235,16 @@ export function createApp({ mode = 'local' } = {}) {
         });
         return;
       }
+      if (url.pathname === '/api/metric-series') {
+        const metric = url.searchParams.get('metric') ?? '';
+        if (!METRIC_IDS.includes(metric)) {
+          sendJSON(res, 400, { error: `metric must be one of ${METRIC_IDS.join(', ')}` });
+          return;
+        }
+        const events = await loadEvents();
+        sendJSON(res, 200, metricSeries(events, { metric, range: url.searchParams.get('range') ?? '7d' }));
+        return;
+      }
       if (url.pathname === '/api/usage-curve') {
         const from = Number.parseFloat(url.searchParams.get('from') ?? '');
         const to = Number.parseFloat(url.searchParams.get('to') ?? '');
@@ -262,11 +272,25 @@ export function createApp({ mode = 'local' } = {}) {
       }
 
       // --------------------------------------------------------------- static
+      /*
+       * Where the pairing QR points. It carries an http address rather than the
+       * `claudeledger://` link itself because the iOS Camera app reliably offers
+       * to open http and is unreliable about custom schemes; this page is what
+       * hands the phone over to the app.
+       */
+      if (url.pathname === '/pair' || url.pathname === '/pair/') {
+        await serveStatic(res, '/pair.html', MOBILE_DIR);
+        return;
+      }
       if (isLan) {
         // A phone gets the phone UI at the root. The desktop dashboard is never
         // served over the network: it assumes an unauthenticated API and a
         // 1320px window, and neither holds here.
         await serveStatic(res, url.pathname, MOBILE_DIR);
+        return;
+      }
+      if (url.pathname === '/m/pair' || url.pathname === '/m/pair/') {
+        await serveStatic(res, '/pair.html', MOBILE_DIR);
         return;
       }
       if (url.pathname === '/m' || url.pathname === '/m/') {

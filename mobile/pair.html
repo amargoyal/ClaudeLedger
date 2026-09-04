@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <title>Pair Claude Ledger</title>
+    <link rel="icon" type="image/svg+xml" href="./logo.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <!--
+      The landing page for the pairing QR.
+
+      The QR carries this http address rather than the `claudeledger://` link
+      directly: the iOS Camera app happily offers to open an http URL and is
+      unreliable about custom schemes, so the scan lands here first and this page
+      is what hands the phone to the app. Everything it needs is in the URL and
+      its own origin, so it is a static file with no API call to make.
+    -->
+    <section class="connect">
+      <div class="connect-inner">
+        <img class="connect-mark" src="./logo.svg" width="76" height="76" alt="" />
+        <h1 class="connect-title">Claude Ledger</h1>
+        <p class="connect-blurb" id="blurb">Opening the app…</p>
+
+        <div class="connect-error" id="error" hidden></div>
+
+        <a class="btn primary" id="open-app" href="#">Open in Ledger</a>
+        <a class="btn ghost" id="open-web" href="#">Continue in the browser</a>
+      </div>
+    </section>
+
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+      const code = (params.get('code') ?? '').replace(/\D/g, '').slice(0, 6);
+      /*
+       * The Mac that served this page is the Mac to pair with, so the address
+       * never has to travel in the QR.
+       *
+       * Over the Cloudflare tunnel the scheme is the load-bearing part — drop it
+       * and the phone rebuilds `http://<tunnel>:4317`, which is not a thing that
+       * exists — so an https page hands over its whole origin.
+       */
+      const host =
+        params.get('host') ?? (location.protocol === 'https:' ? location.origin : location.host);
+
+      const appLink = `claudeledger://pair?host=${encodeURIComponent(host)}&code=${code}`;
+      const webLink = `/?code=${code}&host=${encodeURIComponent(host)}`;
+
+      document.getElementById('open-app').href = appLink;
+      document.getElementById('open-web').href = webLink;
+
+      if (code.length !== 6) {
+        const err = document.getElementById('error');
+        err.textContent = 'That link has no pairing code in it. Scan the code on your Mac again.';
+        err.hidden = false;
+        document.getElementById('blurb').textContent = '';
+        document.getElementById('open-app').hidden = true;
+      } else {
+        // Safari runs this on load, and the app opens without anyone tapping
+        // anything. When it declines — no app installed, or a gesture required —
+        // the two buttons below are already the answer, so nothing is retried.
+        location.href = appLink;
+        setTimeout(() => {
+          document.getElementById('blurb').textContent =
+            'If the app did not open, tap below. Code ' + code + '.';
+        }, 1200);
+      }
+    </script>
+  </body>
+</html>

@@ -189,6 +189,8 @@ let serverModule = null;
 let lan = null;
 let lanError = null;
 let lanModule = null;
+/** Loaded with the rest; only spawns anything when the relay switch is used. */
+let tunnelModule = null;
 let anthropic = null;
 let lastAccount = null;
 
@@ -325,6 +327,28 @@ function createPanel(port) {
     panel = null;
   });
 
+  /**
+   * Treat a close request on the popover as a request to quit the whole app.
+   *
+   * Nothing in the UI ever closes this window — dismissing it calls `hide()` — so
+   * a close can only have come from outside the process: a Windows installer or
+   * uninstaller asking the app to exit, `taskkill` without `/f`, or a shutdown.
+   * The app deliberately keeps running with no windows open so the tray item
+   * stays live, which means that polite request would otherwise go unanswered and
+   * the installer would stall on "Claude Ledger cannot be closed".
+   *
+   * Quitting here is safe: window state is written on every move and resize, and
+   * `before-quit` still closes the servers.
+   *
+   * The visibility guard rules out the one close a person can actually trigger:
+   * Cmd/Ctrl+W from the Window menu while the popover is open and focused. An
+   * external request arrives whether the popover is on screen or not, and it is
+   * hidden in every case that matters here.
+   */
+  panel.on('close', () => {
+    if (!panel.isVisible()) app.quit();
+  });
+
   // Keep the native surface in step with the CSS, which follows prefers-color-scheme.
   nativeTheme.on('updated', () => paint(panel, 'panel'));
 
@@ -448,6 +472,7 @@ function pairState() {
     addresses: lanModule ? lanModule.lanAddresses() : [],
     pairing: lanModule ? lanModule.pairingState() : { active: false },
     devices: lanModule ? lanModule.listDevices() : [],
+    relay: tunnelModule ? tunnelModule.tunnelState() : { installed: false, running: false, origin: null },
     error: lanError,
   };
 }
@@ -468,13 +493,36 @@ async function setSharing(on) {
     // Closing the listener without also closing the pairing window would leave a
     // live code on screen for a service that no longer answers.
     lanModule?.stopPairing();
+    tunnelModule?.stopTunnel();
     await lan.stop();
     lan = null;
   }
   return pairState();
 }
 
+/**
+ * The internet path, switched on by hand.
+ *
+ * A LAN address only answers on this Wi-Fi, so a phone on cellular gets a page
+ * that never loads. This puts a Cloudflare quick tunnel in front of the same
+ * phone-facing listener, which makes one https address that answers anywhere —
+ * and publishes it, which is why it is off until asked for and why the pairing
+ * window says what it does.
+ */
+async function setRelay(on) {
+  if (!tunnelModule) return pairState();
+  if (on) {
+    // Nothing to tunnel to until the listener exists.
+    if (!lan) await setSharing(true);
+    if (lan) await tunnelModule.startTunnel({ port: lan.port });
+  } else {
+    tunnelModule.stopTunnel();
+  }
+  return pairState();
+}
+
 async function stopSharing() {
+  tunnelModule?.stopTunnel();
   if (lan) {
     await lan.stop();
     lan = null;
@@ -603,6 +651,7 @@ function registerIpc() {
 
   ipcMain.handle('pair:state', () => pairState());
   ipcMain.handle('pair:set-sharing', (_event, on) => setSharing(on));
+  ipcMain.handle('pair:set-relay', (_event, on) => setRelay(Boolean(on)));
   ipcMain.handle('pair:new-code', () => {
     lanModule?.startPairing();
     return pairState();
@@ -695,6 +744,7 @@ app.whenReady().then(async () => {
   try {
     serverModule = await importLocal('server.js');
     lanModule = await importLocal('src/lan.js');
+    tunnelModule = await importLocal('src/tunnel.js');
     // Port 0 = let the OS pick a free port, bound to loopback only.
     serverInfo = await serverModule.startServer({ port: 0, host: '127.0.0.1' });
   } catch (err) {

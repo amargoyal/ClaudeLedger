@@ -109,6 +109,11 @@ function totalIn(t) {
   return t.inputTokens + t.cacheRead + t.cacheCreate5m + t.cacheCreate1h;
 }
 
+/** The half of `totalIn` the model had not seen before: everything but cache hits. */
+function freshIn(t) {
+  return t.inputTokens + t.cacheCreate5m + t.cacheCreate1h;
+}
+
 // ------------------------------------------------------------------ range slice
 
 /**
@@ -744,6 +749,7 @@ export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7
   const statCards = [
     {
       label: 'Messages',
+      metric: 'messages',
       value: fmtCount(totals.messages),
       unit: '',
       sub: `${fmtCount(rangePrompts.length)} prompt${rangePrompts.length === 1 ? '' : 's'} sent`,
@@ -752,14 +758,37 @@ export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7
     },
     {
       label: 'Tokens in',
+      metric: 'tokensIn',
       value: fmtCount(totalIn(totals)),
       unit: '',
       sub: `${fmtCount(totals.cacheRead)} of it cached reads, billed at 1/10`,
       delta: prev ? delta(totalIn(totals), totalIn(prev)) : null,
       series: sparkSeries(events, bounds, now, (t, e) => t + e.inputTokens + e.cacheRead + e.cacheCreate5m + e.cacheCreate1h),
+      // Cached reads dwarf fresh context by two orders of magnitude, which makes
+      // the combined figure look wrong next to "Tokens out". The split lets the
+      // card open into its two halves without costing a grid slot.
+      split: [
+        {
+          label: 'Fresh in',
+          metric: 'freshIn',
+          value: fmtCount(freshIn(totals)),
+          sub: 'tokens in, full rate',
+          delta: prev ? delta(freshIn(totals), freshIn(prev)) : null,
+          series: sparkSeries(events, bounds, now, (t, e) => t + e.inputTokens + e.cacheCreate5m + e.cacheCreate1h),
+        },
+        {
+          label: 'Cache read',
+          metric: 'cacheRead',
+          value: fmtCount(totals.cacheRead),
+          sub: 'tokens in, 1/10 rate',
+          delta: delta(totals.cacheRead, prev?.cacheRead),
+          series: sparkSeries(events, bounds, now, (t, e) => t + e.cacheRead),
+        },
+      ],
     },
     {
       label: 'Tokens out',
+      metric: 'tokensOut',
       value: fmtCount(totals.outputTokens),
       unit: '',
       sub: totals.messages
@@ -770,6 +799,7 @@ export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7
     },
     {
       label: 'API-equivalent',
+      metric: 'cost',
       value: fmtMoney(totals.cost),
       unit: '',
       sub: 'what this would cost on the API',
@@ -893,6 +923,223 @@ function sparkSeries(events, bounds, now, reducer) {
     out[idx] = reducer(out[idx], e);
   }
   return out;
+}
+
+// ---------------------------------------------------------------- metric series
+
+/*
+ * One tappable figure, resolved over time.
+ *
+ * The stat cards each carry a 12-point sparkline, which is enough to suggest a
+ * shape and nothing like enough to scrub. This builds the full-resolution
+ * version of the same figure — the trend bucketing, one metric at a time — so
+ * the phone can open a card into a chart without re-fetching the whole snapshot
+ * every time the range changes.
+ */
+const METRICS = {
+  messages: {
+    label: 'Messages',
+    format: 'count',
+    unit: 'messages',
+    source: 'assistant',
+    of: () => 1,
+  },
+  prompts: {
+    label: 'Prompts',
+    format: 'count',
+    unit: 'prompts',
+    source: 'prompts',
+    of: () => 1,
+  },
+  tokensIn: {
+    label: 'Tokens in',
+    format: 'count',
+    unit: 'tokens',
+    source: 'assistant',
+    of: (e) => e.inputTokens + e.cacheRead + e.cacheCreate5m + e.cacheCreate1h,
+  },
+  freshIn: {
+    label: 'Fresh in',
+    format: 'count',
+    unit: 'tokens',
+    source: 'assistant',
+    of: (e) => e.inputTokens + e.cacheCreate5m + e.cacheCreate1h,
+  },
+  cacheRead: {
+    label: 'Cache read',
+    format: 'count',
+    unit: 'tokens',
+    source: 'assistant',
+    of: (e) => e.cacheRead,
+  },
+  tokensOut: {
+    label: 'Tokens out',
+    format: 'count',
+    unit: 'tokens',
+    source: 'assistant',
+    of: (e) => e.outputTokens,
+  },
+  cost: {
+    label: 'API-equivalent',
+    format: 'money',
+    unit: 'spend',
+    source: 'assistant',
+    of: (e) => costOf(e, e.model, e.ts),
+  },
+  toolCalls: {
+    label: 'Tool calls',
+    format: 'count',
+    unit: 'calls',
+    source: 'assistant',
+    of: (e) => e.tools.length,
+  },
+};
+
+export const METRIC_IDS = Object.keys(METRICS);
+
+/** Metrics worth offering as a next tap from a given one. */
+const RELATED = {
+  tokensIn: ['freshIn', 'cacheRead'],
+  freshIn: ['tokensIn', 'cacheRead'],
+  cacheRead: ['tokensIn', 'freshIn'],
+  messages: ['prompts', 'toolCalls'],
+  prompts: ['messages'],
+  toolCalls: ['messages'],
+  tokensOut: ['tokensIn', 'cost'],
+  cost: ['tokensIn', 'tokensOut'],
+};
+
+function bucketize(rows, metric, from, to, step) {
+  const count = Math.max(2, Math.ceil((to - from) / step));
+  const out = new Array(count).fill(0);
+  for (const row of rows) {
+    if (row.ts < from || row.ts > to) continue;
+    const idx = Math.min(count - 1, Math.floor((row.ts - from) / step));
+    out[idx] += metric.of(row);
+  }
+  return out;
+}
+
+function fmtMetric(value, format) {
+  return format === 'money' ? fmtMoney(value) : fmtCount(value);
+}
+
+/**
+ * A full-resolution series for one metric over one range, plus the figures the
+ * chart screen shows underneath it.
+ */
+export function metricSeries({ assistant, prompts, meta }, { metric: id, range = '7d' } = {}) {
+  const metric = METRICS[id];
+  if (!metric) return null;
+
+  const now = Date.now();
+  const activeRange = RANGES.includes(range) ? range : '7d';
+  const bounds = rangeBounds(activeRange, now);
+  const rows = metric.source === 'prompts' ? prompts : assistant;
+  const from = Number.isFinite(bounds.from) ? bounds.from : (rows[0]?.ts ?? startOfLocalDay(now));
+  const { step } = trendResolution(activeRange, { from, to: bounds.to });
+
+  const values = bucketize(rows, metric, from, bounds.to, step);
+  const stamps = values.map((_, i) => from + i * step);
+  const total = values.reduce((a, b) => a + b, 0);
+
+  // Same-length window one period back, on the same rule the stat chips use:
+  // only compared when history actually covers it.
+  const shift = rangeShiftMs(activeRange);
+  const prevTotal = (() => {
+    if (shift == null || !Number.isFinite(bounds.from)) return null;
+    const prevFrom = bounds.from - shift;
+    if (meta?.firstTs == null || prevFrom < meta.firstTs) return null;
+    return rows
+      .filter((r) => r.ts >= prevFrom && r.ts < bounds.from)
+      .reduce((sum, r) => sum + metric.of(r), 0);
+  })();
+
+  const delta = (() => {
+    if (prevTotal == null || prevTotal === 0) return null;
+    const pct = ((total - prevTotal) / prevTotal) * 100;
+    if (Math.abs(pct) > 999) return null;
+    return { text: `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%`, positive: pct >= 0 };
+  })();
+
+  const active = values.filter((v) => v > 0);
+  const peakIdx = values.reduce((best, v, i) => (v > values[best] ? i : best), 0);
+  const bucketLabel = (ms) => {
+    const min = Math.round(ms / 60_000);
+    if (min < 60) return `${min} min`;
+    const h = Math.round(min / 60);
+    return h < 24 ? `${h}h` : `${Math.round(h / 24)}d`;
+  };
+  const whenLabel = (ts) =>
+    new Date(ts).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+
+  const stats = [
+    { label: 'Total', value: fmtMetric(total, metric.format) },
+    {
+      label: 'Peak',
+      value: fmtMetric(values[peakIdx] ?? 0, metric.format),
+      sub: values[peakIdx] ? whenLabel(stamps[peakIdx]) : null,
+    },
+    {
+      label: `Avg per ${bucketLabel(step)}`,
+      value: active.length ? fmtMetric(total / active.length, metric.format) : '—',
+      sub: 'while active',
+    },
+    {
+      label: 'Previous period',
+      value: prevTotal == null ? '—' : fmtMetric(prevTotal, metric.format),
+      sub: prevTotal == null ? 'not enough history' : RANGE_LABELS[activeRange].toLowerCase() + ' before',
+    },
+    {
+      label: 'Active buckets',
+      value: `${active.length} of ${values.length}`,
+      sub: `${bucketLabel(step)} each`,
+    },
+    {
+      label: 'Quietest gap',
+      value: bucketLabel(longestGap(values) * step),
+      sub: 'longest run with nothing',
+    },
+  ];
+
+  return {
+    metric: id,
+    label: metric.label,
+    // Tokens in is the sum of two very differently-priced halves, and the split
+    // is the first question the total provokes. Offer it as a jump rather than
+    // making the phone go back and hunt for it.
+    related: (RELATED[id] ?? []).map((rid) => ({ metric: rid, label: METRICS[rid].label })),
+    unit: metric.unit,
+    format: metric.format,
+    range: activeRange,
+    rangeLabel: RANGE_LABELS[activeRange],
+    ranges: RANGES.map((rid) => ({ id: rid, label: RANGE_LABELS[rid] })),
+    from,
+    to: bounds.to,
+    bucketMs: step,
+    values,
+    stamps,
+    total,
+    totalText: fmtMetric(total, metric.format),
+    delta,
+    stats,
+  };
+}
+
+/** Longest run of empty buckets, in buckets. */
+function longestGap(values) {
+  let best = 0;
+  let run = 0;
+  for (const v of values) {
+    run = v > 0 ? 0 : run + 1;
+    if (run > best) best = run;
+  }
+  return best;
 }
 
 /**

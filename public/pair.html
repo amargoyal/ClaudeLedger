@@ -28,6 +28,19 @@
         </button>
       </div>
       <div class="error" id="share-error" hidden></div>
+
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">Reach this Mac from anywhere</div>
+          <div class="toggle-sub" id="relay-sub">
+            Off — the phone has to be on this Wi‑Fi.
+          </div>
+        </div>
+        <button class="switch" id="relay-switch" type="button" role="switch" aria-checked="false">
+          <span class="knob"></span>
+        </button>
+      </div>
+      <div class="error" id="relay-error" hidden></div>
     </section>
 
     <section class="panel" id="pair-panel" hidden>
@@ -36,7 +49,8 @@
         <div class="qr-side">
           <div class="eyebrow">Scan with the Camera app</div>
           <p class="qr-note">
-            Or open Claude Ledger on your phone and type these in.
+            Opens the Ledger app on your phone. No app yet? The same page offers
+            the browser version. Or type these in by hand.
           </p>
           <div class="field">
             <div class="field-label">Address</div>

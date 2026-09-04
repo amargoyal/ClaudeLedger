@@ -223,40 +223,119 @@ function renderRangeSwitch() {
   }
 }
 
+/** Which splittable stat cards are currently opened into their two halves. */
+const SPLIT_KEY = 'ledger.statSplit';
+const splitOpen = new Set(
+  (() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SPLIT_KEY) ?? '[]');
+      return Array.isArray(raw) ? raw : [];
+    } catch {
+      return [];
+    }
+  })(),
+);
+
+function saveSplitOpen() {
+  try {
+    localStorage.setItem(SPLIT_KEY, JSON.stringify([...splitOpen]));
+  } catch {
+    /* private mode; the toggle still works for this page load */
+  }
+}
+
+function sparkSvg(series, cls = 'stat-spark') {
+  const svg = svgEl('svg', { viewBox: '0 0 100 28', class: cls });
+  svg.append(
+    svgEl('polyline', {
+      points: sparkPoints(series),
+      fill: 'none',
+      stroke: color('--accent'),
+      'stroke-width': 2,
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+    }),
+  );
+  return svg;
+}
+
+function statDelta(d) {
+  return d ? el('div', `stat-delta ${d.positive ? 'up' : 'down'}`, d.text) : el('div', 'stat-delta', '');
+}
+
+/** The whole card as one figure — label, value, sparkline, footnote. */
+function fillStatWhole(card, c) {
+  const top = el('div', 'stat-top');
+  top.append(el('div', 'stat-label', c.label), statDelta(c.delta));
+
+  const mid = el('div', 'stat-mid');
+  const value = el('div', 'stat-value');
+  value.append(document.createTextNode(c.value));
+  if (c.unit) value.append(el('span', null, ` ${c.unit}`));
+  mid.append(value, sparkSvg(c.series));
+
+  card.append(top, mid, el('div', 'stat-sub', c.sub));
+}
+
+/**
+ * The same card footprint, divided into the parts the total is made of. Each
+ * pane repeats the whole card's label/value/footnote rhythm, so the split
+ * occupies exactly the height it did closed and the stat row never reflows.
+ */
+function fillStatSplit(card, c) {
+  const split = el('div', 'stat-split');
+  for (const part of c.split) {
+    const pane = el('div', 'stat-pane');
+
+    const top = el('div', 'stat-top');
+    top.append(el('div', 'stat-label', part.label), statDelta(part.delta));
+
+    const mid = el('div', 'stat-mid');
+    mid.append(el('div', 'stat-value', part.value), sparkSvg(part.series, 'stat-spark pane'));
+
+    pane.append(top, mid, el('div', 'stat-sub', part.sub));
+    split.appendChild(pane);
+  }
+  card.append(split);
+}
+
 function renderStats(cards) {
   const grid = $('stat-grid');
   clear(grid);
   for (const c of cards) {
     const card = el('div', 'stat');
+    const splittable = Array.isArray(c.split) && c.split.length === 2;
 
-    const top = el('div', 'stat-top');
-    top.append(el('div', 'stat-label', c.label));
-    if (c.delta) {
-      top.append(el('div', `stat-delta ${c.delta.positive ? 'up' : 'down'}`, c.delta.text));
-    } else {
-      top.append(el('div', 'stat-delta', ''));
+    const paint = () => {
+      clear(card);
+      const open = splittable && splitOpen.has(c.label);
+      card.classList.toggle('is-split', open);
+      if (open) fillStatSplit(card, c);
+      else fillStatWhole(card, c);
+    };
+
+    if (splittable) {
+      card.classList.add('is-splittable');
+      card.setAttribute('role', 'button');
+      card.tabIndex = 0;
+      card.title = `${c.label}: click to split into ${c.split.map((p) => p.label).join(' and ')}`;
+      const toggle = () => {
+        if (splitOpen.has(c.label)) splitOpen.delete(c.label);
+        else splitOpen.add(c.label);
+        saveSplitOpen();
+        paint();
+        card.setAttribute('aria-expanded', String(splitOpen.has(c.label)));
+      };
+      card.setAttribute('aria-expanded', String(splitOpen.has(c.label)));
+      card.addEventListener('click', toggle);
+      card.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+        ev.preventDefault();
+        toggle();
+      });
     }
 
-    const mid = el('div', 'stat-mid');
-    const value = el('div', 'stat-value');
-    value.append(document.createTextNode(c.value));
-    if (c.unit) value.append(el('span', null, ` ${c.unit}`));
-    mid.append(value);
-
-    const svg = svgEl('svg', { viewBox: '0 0 100 28', class: 'stat-spark' });
-    svg.append(
-      svgEl('polyline', {
-        points: sparkPoints(c.series),
-        fill: 'none',
-        stroke: color('--accent'),
-        'stroke-width': 2,
-        'stroke-linecap': 'round',
-        'stroke-linejoin': 'round',
-      }),
-    );
-    mid.append(svg);
-
-    card.append(top, mid, el('div', 'stat-sub', c.sub));
+    paint();
     grid.appendChild(card);
   }
 }

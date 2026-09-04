@@ -133,6 +133,173 @@ if (existsSync(splashDir)) {
   console.log('Splash images written');
 }
 
+// ------------------------------------------------------------ scene lifecycle
+
+/*
+ * iOS 26 made UIScene adoption mandatory. An app built against that SDK which
+ * still launches through UIApplicationDelegate alone traps at startup inside
+ * `__UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption` — a bare
+ * EXC_BREAKPOINT in AppDelegate.swift with the launch screen left on screen.
+ *
+ * Capacitor 7.6 still ships the pre-scene template, so the adoption is added
+ * here. The delegate lives inside AppDelegate.swift rather than its own file so
+ * that no entry has to be spliced into project.pbxproj to compile it.
+ */
+const SCENE_MARK = '// --- claude-ledger: UIScene adoption';
+
+const appDelegate = join(ROOT, 'ios', 'App', 'App', 'AppDelegate.swift');
+if (existsSync(appDelegate)) {
+  const current = readFileSync(appDelegate, 'utf8');
+  // Rewritten rather than skipped when it is already there: this block changes,
+  // and a stale copy from an earlier run would silently outlive the fix.
+  const before = current.includes(SCENE_MARK)
+    ? current.slice(0, current.indexOf(SCENE_MARK)).trimEnd()
+    : current;
+  {
+    const scene = `
+${SCENE_MARK} (added by scripts/ios-configure.mjs) ---
+/*
+ * UIKit owns the window and the storyboard here; this delegate exists to satisfy
+ * scene adoption and to keep the \`claudeledger://pair\` links working, which
+ * arrive through the scene rather than through UIApplicationDelegate once scenes
+ * are in play. Capacitor's proxy is what its plugins listen to.
+ */
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        guard let windowScene = scene as? UIWindowScene else { return }
+        // The web view is created when the bridge controller loads its view,
+        // which has not happened yet.
+        DispatchQueue.main.async { [weak self] in
+            self?.paintChrome(windowScene)
+        }
+        if let url = connectionOptions.urlContexts.first?.url {
+            _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, open: url, options: [:])
+        }
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        guard let windowScene = scene as? UIWindowScene else { return }
+        paintChrome(windowScene)
+    }
+
+    /*
+     * Hand the safe areas to the page.
+     *
+     * Capacitor paints the web view with the ios.backgroundColor config — one static
+     * colour, so on a phone in dark mode the strip behind the status bar stayed
+     * paper white while everything the page drew was ink. Clearing the web view
+     * lets the page's own background cover that strip, which means it follows the
+     * app's Appearance setting rather than only the system's.
+     *
+     * The window keeps a colour of its own for the one place the page cannot
+     * reach: the rubber band at the end of a scroll.
+     */
+    private func paintChrome(_ windowScene: UIWindowScene) {
+        let paper = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0x16 / 255, green: 0x13 / 255, blue: 0x0F / 255, alpha: 1)
+                : UIColor(red: 0xF6 / 255, green: 0xF1 / 255, blue: 0xE8 / 255, alpha: 1)
+        }
+        let windows = window.map { [$0] } ?? windowScene.windows
+        for window in windows {
+            window.backgroundColor = paper
+            window.rootViewController?.view.backgroundColor = paper
+            guard let bridge = window.rootViewController as? CAPBridgeViewController else { continue }
+            bridge.webView?.isOpaque = false
+            bridge.webView?.backgroundColor = .clear
+            bridge.webView?.scrollView.backgroundColor = .clear
+        }
+    }
+
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        guard let url = URLContexts.first?.url else { return }
+        _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, open: url, options: [:])
+    }
+
+    func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+        _ = ApplicationDelegateProxy.shared.application(
+            UIApplication.shared,
+            continue: userActivity,
+            restorationHandler: { _ in }
+        )
+    }
+}
+`;
+    const next = `${before.trimEnd()}\n${scene}`;
+    if (next !== current) {
+      writeFileSync(appDelegate, next);
+      console.log('SceneDelegate written to AppDelegate.swift');
+    }
+  }
+}
+
+const infoPlist = join(ROOT, 'ios', 'App', 'App', 'Info.plist');
+if (existsSync(infoPlist)) {
+  const before = readFileSync(infoPlist, 'utf8');
+  if (!before.includes('UIApplicationSceneManifest')) {
+    const manifest = [
+      '\t<key>UIApplicationSceneManifest</key>',
+      '\t<dict>',
+      '\t\t<key>UIApplicationSupportsMultipleScenes</key>',
+      '\t\t<false/>',
+      '\t\t<key>UISceneConfigurations</key>',
+      '\t\t<dict>',
+      '\t\t\t<key>UIWindowSceneSessionRoleApplication</key>',
+      '\t\t\t<array>',
+      '\t\t\t\t<dict>',
+      '\t\t\t\t\t<key>UISceneConfigurationName</key>',
+      '\t\t\t\t\t<string>Default Configuration</string>',
+      '\t\t\t\t\t<key>UISceneDelegateClassName</key>',
+      '\t\t\t\t\t<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>',
+      '\t\t\t\t\t<key>UISceneStoryboardFile</key>',
+      '\t\t\t\t\t<string>Main</string>',
+      '\t\t\t\t</dict>',
+      '\t\t\t</array>',
+      '\t\t</dict>',
+      '\t</dict>',
+      '</dict>',
+    ].join('\n');
+    writeFileSync(infoPlist, before.replace(/<\/dict>\s*<\/plist>\s*$/, `${manifest}\n</plist>\n`));
+    console.log('UIApplicationSceneManifest added to Info.plist');
+  }
+}
+
+// ---------------------------------------------------------- deployment target
+
+/*
+ * Xcode 26 will not build a simulator slice below iOS 15.0, and Capacitor
+ * scaffolds both the project and the Podfile at 14.0. `ios/` is not in the repo,
+ * so this is the only durable place to state the floor: whoever runs
+ * `npm run ios:add` on a fresh checkout gets a project that builds.
+ *
+ * The pods need their own pass. `assertDeploymentTarget` only raises the pods
+ * that ask for less than the podspec minimum, which left most of them at 14.0.
+ */
+const IOS_MIN = '15.0';
+
+const podfile = join(ROOT, 'ios', 'App', 'Podfile');
+if (existsSync(podfile)) {
+  const before = readFileSync(podfile, 'utf8');
+  let after = before.replace(/platform :ios, '1[0-4](\.\d+)?'/, `platform :ios, '${IOS_MIN}'`);
+  if (!after.includes("config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']")) {
+    after = after.replace(
+      /post_install do \|installer\|\n(\s*)assertDeploymentTarget\(installer\)\n/,
+      (m, indent) =>
+        `${m}${indent}installer.pods_project.targets.each do |target|\n` +
+        `${indent}  target.build_configurations.each do |config|\n` +
+        `${indent}    config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '${IOS_MIN}'\n` +
+        `${indent}  end\n` +
+        `${indent}end\n`,
+    );
+  }
+  if (after !== before) {
+    writeFileSync(podfile, after);
+    console.log(`Podfile pinned to iOS ${IOS_MIN} — run \`pod install\` in ios/App`);
+  }
+}
+
 // -------------------------------------------------------------------- version
 
 /*
@@ -144,7 +311,13 @@ const project = join(ROOT, 'ios', 'App', 'App.xcodeproj', 'project.pbxproj');
 if (existsSync(project)) {
   const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
   const before = readFileSync(project, 'utf8');
-  const after = before.replace(/MARKETING_VERSION = [^;]+;/g, `MARKETING_VERSION = ${version};`);
+  /*
+   * `cap sync` rewrites the project back to Capacitor's scaffold target, so the
+   * floor is re-applied here on every sync rather than set once by hand.
+   */
+  const after = before
+    .replace(/MARKETING_VERSION = [^;]+;/g, `MARKETING_VERSION = ${version};`)
+    .replace(/IPHONEOS_DEPLOYMENT_TARGET = 1[0-4](\.\d+)?;/g, `IPHONEOS_DEPLOYMENT_TARGET = ${IOS_MIN};`);
   if (after !== before) {
     writeFileSync(project, after);
     console.log(`MARKETING_VERSION set to ${version}`);
