@@ -95,6 +95,9 @@ const Native = {
   onUrl(fn) {
     this.plugins.App?.addListener('appUrlOpen', ({ url }) => fn(url));
   },
+  get notifications() {
+    return this.plugins.LocalNotifications ?? null;
+  },
   /**
    * Keep the status bar text legible against the paper/ink backgrounds.
    *
@@ -145,6 +148,7 @@ const KEY_CONN = 'ledger.mobile.conn';
 const KEY_CACHE = 'ledger.mobile.cache';
 const KEY_TAB = 'ledger.mobile.tab';
 const KEY_RANGE = 'ledger.mobile.range';
+const KEY_ALERTS = 'ledger.mobile.alerts';
 
 function readJSON(key) {
   try {
@@ -254,6 +258,154 @@ async function api(path, { base, token, method = 'GET', body, timeout = 20_000 }
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ---------------------------------------------------------------- limit alerts
+
+/*
+ * The one thing a usage app on a phone can do that a menu bar cannot: reach you
+ * before a limit does.
+ *
+ * These are local notifications scheduled from the projection the Mac sends, so
+ * they arrive whether or not the app is open, and without a push server. The
+ * cost of that is honesty: the projection is a snapshot of the rate when the
+ * phone last spoke to the Mac, and if work stopped an hour ago the warning is
+ * wrong. So every one of them says when it was measured, and the whole set is
+ * torn down and rebuilt on each refresh rather than left to age.
+ */
+const ALERT_THRESHOLD = 80;
+/** Anything closer than this has already happened by the time it is delivered. */
+const MIN_LEAD_MS = 3 * 60_000;
+
+const WINDOW_LABELS = { session: 'session', weekly_all: 'weekly' };
+
+function windowLabel(key) {
+  if (WINDOW_LABELS[key]) return WINDOW_LABELS[key];
+  return key?.startsWith('weekly_scoped:') ? `${key.split(':')[1]} weekly` : 'usage';
+}
+
+function alertsEnabled() {
+  return localStorage.getItem(KEY_ALERTS) === 'on';
+}
+
+/**
+ * A stable id per window and kind, so a rescheduled warning replaces the one it
+ * supersedes instead of stacking a second copy on the lock screen.
+ */
+function alertId(key, kind) {
+  let hash = kind === 'full' ? 1 : 2;
+  for (const ch of key) hash = (hash * 31 + ch.charCodeAt(0)) % 100_000;
+  return hash + 1000;
+}
+
+function clockAt(ts) {
+  return new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+/** What to warn about, from what the Mac last projected. */
+function plannedAlerts(account, now = Date.now()) {
+  const windows = account?.limits?.windows ?? [];
+  const projections = account?.projections ?? {};
+  const measured = clockAt(now);
+  const planned = [];
+
+  for (const window of windows) {
+    const projection = projections[window.key];
+    if (!projection || window.utilization == null) continue;
+
+    const label = windowLabel(window.key);
+    const rate = projection.ratePerHour;
+    const resetsAt = projection.resetsAt ?? Infinity;
+
+    // When the window empties, but only if it empties before it refills.
+    if (projection.willExhaustBeforeReset && projection.exhaustsAt - now > MIN_LEAD_MS) {
+      planned.push({
+        id: alertId(window.key, 'full'),
+        at: projection.exhaustsAt,
+        title: `Your ${label} limit is out`,
+        body: `At ${rate.toFixed(1)}%/hr, measured ${measured}, this is when the ${label} window runs dry.`,
+      });
+    }
+
+    // And the warning shot, which is the one that is actually useful: enough
+    // room left to finish what you are doing, not enough to start something.
+    if (window.utilization < ALERT_THRESHOLD && rate > 0) {
+      const at = now + ((ALERT_THRESHOLD - window.utilization) / rate) * 3_600_000;
+      if (at - now > MIN_LEAD_MS && at < resetsAt) {
+        planned.push({
+          id: alertId(window.key, 'warn'),
+          at,
+          title: `${ALERT_THRESHOLD}% of your ${label} limit`,
+          body: `At ${rate.toFixed(1)}%/hr, measured ${measured}. About ${shortWait(resetsAt - at)} of window left after that.`,
+        });
+      }
+    }
+  }
+  return planned;
+}
+
+function shortWait(ms) {
+  const mins = Math.round(ms / 60_000);
+  if (mins < 60) return `${Math.max(1, mins)}m`;
+  const h = Math.floor(mins / 60);
+  return h >= 24 ? `${Math.round(h / 24)}d` : `${h}h`;
+}
+
+/**
+ * Rebuild the pending set to match the newest projection.
+ *
+ * Cancel first, always. A warning scheduled from a rate that has since collapsed
+ * is worse than no warning: it teaches you to ignore the next one.
+ */
+async function syncAlerts() {
+  const plugin = Native.notifications;
+  if (!plugin) return;
+
+  try {
+    const pending = await plugin.getPending();
+    const mine = (pending?.notifications ?? []).filter((n) => n.id >= 1000);
+    if (mine.length) await plugin.cancel({ notifications: mine.map((n) => ({ id: n.id })) });
+
+    if (!alertsEnabled()) return;
+    const planned = plannedAlerts(state.account);
+    if (!planned.length) return;
+
+    await plugin.schedule({
+      notifications: planned.map((a) => ({
+        id: a.id,
+        title: a.title,
+        body: a.body,
+        schedule: { at: new Date(a.at), allowWhileIdle: true },
+      })),
+    });
+  } catch {
+    // Permission revoked in Settings, or an OS that will not schedule right now.
+    // Nothing here is worth interrupting a refresh over.
+  }
+}
+
+/** Ask once, and only when the switch is turned on. */
+async function enableAlerts() {
+  const plugin = Native.notifications;
+  if (!plugin) return false;
+  try {
+    const current = await plugin.checkPermissions();
+    const granted =
+      current.display === 'granted'
+        ? true
+        : (await plugin.requestPermissions()).display === 'granted';
+    if (!granted) return false;
+    localStorage.setItem(KEY_ALERTS, 'on');
+    await syncAlerts();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function disableAlerts() {
+  localStorage.setItem(KEY_ALERTS, 'off');
+  await syncAlerts();
 }
 
 // ------------------------------------------------------------------ formatting
@@ -873,6 +1025,63 @@ function renderUsage(view) {
 
 const THEME_LABELS = { system: 'Auto', light: 'Light', dark: 'Dark' };
 
+/**
+ * The alerts switch, with what is currently scheduled printed under it.
+ *
+ * The times are the point: a warning you cannot see coming is indistinguishable
+ * from an app that fires notifications at random, and the projection behind
+ * these is honest enough to show.
+ */
+function alertSwitch() {
+  const wrap = el('div');
+  const row = card();
+  row.style.display = 'flex';
+  row.style.alignItems = 'center';
+  row.style.justifyContent = 'space-between';
+  row.style.gap = '14px';
+
+  const label = el('div');
+  label.append(el('div', 'row-name', 'Warn me before a limit runs out'));
+  const sub = el('div', 'row-meta', '');
+  label.append(sub);
+
+  const button = el('button', `pill${alertsEnabled() ? ' is-on' : ''}`, alertsEnabled() ? 'On' : 'Off');
+  button.type = 'button';
+
+  const describe = () => {
+    if (!alertsEnabled()) {
+      sub.textContent = 'Off';
+      return;
+    }
+    const planned = plannedAlerts(state.account).sort((a, b) => a.at - b.at);
+    sub.textContent = planned.length
+      ? `Next: ${planned[0].title.toLowerCase()}, about ${clockAt(planned[0].at)}`
+      : 'On — nothing to warn about at the current rate';
+  };
+  describe();
+
+  button.addEventListener('click', async () => {
+    Native.tap('Light');
+    button.disabled = true;
+    try {
+      if (alertsEnabled()) {
+        await disableAlerts();
+      } else if (!(await enableAlerts())) {
+        toast('Notifications are off for Ledger in Settings');
+      }
+    } finally {
+      button.disabled = false;
+    }
+    button.textContent = alertsEnabled() ? 'On' : 'Off';
+    button.classList.toggle('is-on', alertsEnabled());
+    describe();
+  });
+
+  row.append(label, button);
+  wrap.append(row);
+  return wrap;
+}
+
 function themeSwitch() {
   const wrap = el('div', 'segmented');
   const active = storedTheme();
@@ -1158,6 +1367,11 @@ function renderYou(view) {
 
   view.append(sectionLabel('Appearance'));
   view.append(themeSwitch());
+
+  if (Native.notifications) {
+    view.append(sectionLabel('Alerts', 'Scheduled on this phone from the rate your Mac last reported. No push server, and nothing leaves your network.'));
+    view.append(alertSwitch());
+  }
 
   view.append(sectionLabel('This Mac'));
   const conn = card();
@@ -1759,6 +1973,9 @@ function applyPayload(payload) {
   state.error = null;
   state.lastFullAt = Date.now();
   writeJSON(KEY_CACHE, { at: state.cachedAt, range: state.range, ...payload });
+  // Fresh figures mean a fresh projection, and a warning built on the old one is
+  // worse than none: it teaches you to ignore the next.
+  void syncAlerts();
 }
 
 function loadCache() {

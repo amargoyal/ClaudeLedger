@@ -1715,3 +1715,31 @@ button.row:active {
 .mv-chip:active {
   opacity: 0.6;
 }
+
+/* --------------------------------------------------------------- alert switch */
+
+.pill {
+  flex: 0 0 auto;
+  min-width: 62px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  border: 0.5px solid var(--line);
+  background: var(--sunken);
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pill.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
+}
+
+.pill:active {
+  opacity: 0.6;
+}
+
+.pill:disabled {
+  opacity: 0.5;
+}
