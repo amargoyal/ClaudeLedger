@@ -748,7 +748,13 @@ function headlineTiles(snap) {
 }
 
 function statTile(c) {
-  const tile = el('div', 'tile');
+  // Cards the aggregator tagged with a metric id can be opened into a chart;
+  // the rest (streak, active time) have no series behind them and stay inert.
+  const tile = el(c.metric ? 'button' : 'div', `tile${c.metric ? ' is-tappable' : ''}`);
+  if (c.metric) {
+    tile.type = 'button';
+    tile.addEventListener('click', () => openMetricView(c.metric, c.label));
+  }
   const top = el('div', 'tile-top');
   top.append(el('div', 'eyebrow', c.label));
   if (c.delta) top.append(el('div', `delta ${c.delta.positive ? '' : 'down'}`, c.delta.text));
@@ -1292,6 +1298,328 @@ function openDaySheet(day) {
   });
 }
 
+// ---------------------------------------------------------------- metric view
+
+/*
+ * A stat tile opened into its own screen: one metric, one range, drawn full
+ * width and scrubbable. The series comes from `/api/metric-series` rather than
+ * from the snapshot, because the snapshot only carries a 12-point sparkline and
+ * because changing the range in here must not reload every other panel.
+ */
+const metricView = {
+  open: false,
+  metric: null,
+  label: '',
+  range: state.range,
+  data: null,
+  loading: false,
+  error: null,
+};
+
+const RANGE_SHORT = { '5h': '5H', today: '1D', '7d': '7D', '30d': '30D', all: 'ALL' };
+
+/** Up is green, down is the hot colour — the direction, not the metric, decides. */
+function trendColor(data) {
+  if (data?.delta) return color(data.delta.positive ? '--green' : '--hot');
+  const v = data?.values ?? [];
+  if (v.length < 2) return color('--accent');
+  const half = Math.floor(v.length / 2);
+  const first = v.slice(0, half).reduce((a, b) => a + b, 0);
+  const second = v.slice(half).reduce((a, b) => a + b, 0);
+  return color(second >= first ? '--green' : '--hot');
+}
+
+function scrubStamp(ts, bucketMs) {
+  const opts =
+    bucketMs < 6 * 3_600_000
+      ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
+      : { month: 'short', day: 'numeric' };
+  return new Date(ts).toLocaleString(undefined, opts);
+}
+
+/**
+ * Catmull-Rom through the bucket tops, converted to cubic beziers.
+ *
+ * A polyline over a few hundred buckets reads as noise on a phone; the spline
+ * keeps the peaks where they are while giving the line the continuous shape the
+ * screen is for.
+ */
+function smoothPath(pts) {
+  if (pts.length < 2) return pts.length ? `M${pts[0].x},${pts[0].y}` : '';
+  let d = `M${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)}`;
+  for (let i = 0; i < pts.length - 1; i += 1) {
+    const p0 = pts[i - 1] ?? pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] ?? p2;
+    const c1x = p1.x + (p2.x - p0.x) / 6;
+    const c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6;
+    const c2y = p2.y - (p3.y - p1.y) / 6;
+    d += `C${c1x.toFixed(2)},${c1y.toFixed(2)} ${c2x.toFixed(2)},${c2y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)}`;
+  }
+  return d;
+}
+
+let gradientSeq = 0;
+
+function metricChart(data, width, onScrub) {
+  const W = Math.max(260, width);
+  const H = 230;
+  const PAD_T = 14;
+  const PAD_B = 26;
+  const PAD_X = 2;
+
+  const wrap = el('div', 'mv-chart');
+  const values = data.values ?? [];
+  if (!values.length || values.every((v) => v === 0)) {
+    wrap.append(el('div', 'empty', `Nothing recorded in this range.`));
+    return wrap;
+  }
+
+  const node = svg('svg', { class: 'mv-svg', viewBox: `0 0 ${W} ${H}`, width: '100%', height: H });
+  const stroke = trendColor(data);
+  const max = Math.max(...values, 1);
+  const n = values.length;
+  const x = (i) => PAD_X + (i / Math.max(1, n - 1)) * (W - PAD_X * 2);
+  const y = (v) => H - PAD_B - (v / max) * (H - PAD_T - PAD_B);
+  const pts = values.map((v, i) => ({ x: x(i), y: y(v) }));
+
+  const gid = `mv-grad-${(gradientSeq += 1)}`;
+  const defs = svg('defs');
+  const grad = svg('linearGradient', { id: gid, x1: 0, y1: 0, x2: 0, y2: 1 });
+  grad.append(
+    svg('stop', { offset: '0%', 'stop-color': stroke, 'stop-opacity': 0.34 }),
+    svg('stop', { offset: '100%', 'stop-color': stroke, 'stop-opacity': 0 }),
+  );
+  defs.append(grad);
+  node.append(defs);
+
+  const line = smoothPath(pts);
+  node.append(
+    svg('path', { d: `${line}L${x(n - 1)},${H - PAD_B}L${x(0)},${H - PAD_B}Z`, fill: `url(#${gid})` }),
+    svg('line', {
+      class: 'mv-base',
+      x1: PAD_X,
+      x2: W - PAD_X,
+      y1: H - PAD_B,
+      y2: H - PAD_B,
+    }),
+    svg('path', {
+      d: line,
+      fill: 'none',
+      stroke,
+      'stroke-width': 2.2,
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+    }),
+  );
+
+  // Ends of the window, so a scrubbed reading has something to sit between.
+  const edge = (i, anchor) => {
+    const t = svg('text', { class: 'mv-axis', x: anchor === 'start' ? PAD_X : W - PAD_X, y: H - 8, 'text-anchor': anchor });
+    t.textContent = scrubStamp(data.stamps[i], data.bucketMs);
+    return t;
+  };
+  node.append(edge(0, 'start'), edge(n - 1, 'end'));
+
+  const scrub = svg('line', { class: 'mv-scrubline', x1: 0, x2: 0, y1: PAD_T - 6, y2: H - PAD_B, opacity: 0 });
+  const halo = svg('circle', { r: 9, fill: stroke, 'fill-opacity': 0.18, opacity: 0 });
+  const dot = svg('circle', { r: 4.5, fill: stroke, stroke: color('--card'), 'stroke-width': 2, opacity: 0 });
+  node.append(scrub, halo, dot);
+
+  let lastIdx = -1;
+  const showAt = (clientX) => {
+    const rect = node.getBoundingClientRect();
+    const ratio = (clientX - rect.left) / rect.width;
+    const i = Math.max(0, Math.min(n - 1, Math.round(ratio * (n - 1))));
+    const px = x(i);
+    const py = y(values[i]);
+    scrub.setAttribute('x1', px);
+    scrub.setAttribute('x2', px);
+    scrub.setAttribute('opacity', 1);
+    for (const mark of [halo, dot]) {
+      mark.setAttribute('cx', px);
+      mark.setAttribute('cy', py);
+      mark.setAttribute('opacity', 1);
+    }
+    if (i !== lastIdx) {
+      lastIdx = i;
+      Native.tap('Light');
+      onScrub(i);
+    }
+  };
+
+  const end = () => {
+    if (lastIdx === -1) return;
+    lastIdx = -1;
+    scrub.setAttribute('opacity', 0);
+    halo.setAttribute('opacity', 0);
+    dot.setAttribute('opacity', 0);
+    onScrub(null);
+  };
+
+  node.addEventListener('pointerdown', (e) => {
+    node.setPointerCapture(e.pointerId);
+    showAt(e.clientX);
+  });
+  node.addEventListener('pointermove', (e) => {
+    if (lastIdx === -1) return;
+    showAt(e.clientX);
+  });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) node.addEventListener(ev, end);
+
+  wrap.append(node);
+  return wrap;
+}
+
+function metricHeadline(data) {
+  const head = el('div', 'mv-head');
+  const value = el('div', 'mv-value', data.totalText);
+  const meta = el('div', 'mv-meta');
+  if (data.delta) {
+    meta.append(el('span', `mv-delta ${data.delta.positive ? 'up' : 'down'}`, data.delta.text));
+  }
+  meta.append(el('span', 'mv-when', data.rangeLabel));
+  head.append(el('div', 'mv-label', data.label), value, meta);
+
+  /** Swapped in while a finger is down, then swapped back on release. */
+  head.showBucket = (i) => {
+    if (i == null) {
+      value.textContent = data.totalText;
+      clear(meta);
+      if (data.delta) {
+        meta.append(el('span', `mv-delta ${data.delta.positive ? 'up' : 'down'}`, data.delta.text));
+      }
+      meta.append(el('span', 'mv-when', data.rangeLabel));
+      return;
+    }
+    const raw = data.values[i] ?? 0;
+    value.textContent = data.format === 'money' ? fmtMoney(raw) : fmtCount(raw);
+    clear(meta);
+    meta.append(el('span', 'mv-when', scrubStamp(data.stamps[i], data.bucketMs)));
+  };
+  return head;
+}
+
+function metricRanges(data) {
+  const wrap = el('div', 'segmented mv-ranges');
+  for (const r of data.ranges ?? []) {
+    const btn = el('button', r.id === metricView.range ? 'is-active' : null, RANGE_SHORT[r.id] ?? r.label);
+    btn.type = 'button';
+    btn.addEventListener('click', () => {
+      if (metricView.range === r.id) return;
+      metricView.range = r.id;
+      Native.tap('Light');
+      loadMetric();
+    });
+    wrap.append(btn);
+  }
+  return wrap;
+}
+
+function renderMetricView() {
+  const scroll = $('mv-scroll');
+  $('mv-top-title').textContent = metricView.label;
+  clear(scroll);
+
+  if (metricView.error) {
+    scroll.append(emptyCard(metricView.error));
+    return;
+  }
+  if (!metricView.data) {
+    scroll.append(el('div', 'mv-skeleton'));
+    return;
+  }
+
+  const data = metricView.data;
+  const head = metricHeadline(data);
+  scroll.append(head);
+  scroll.append(metricChart(data, scroll.clientWidth - 32, (i) => head.showBucket(i)));
+  scroll.append(metricRanges(data));
+  scroll.append(el('div', 'mv-hint', 'Touch and hold the chart to read a moment.'));
+
+  const stats = el('div', 'mv-stats');
+  for (const s of data.stats ?? []) {
+    const row = el('div', 'mv-stat');
+    row.append(el('div', 'mv-stat-label', s.label), el('div', 'mv-stat-value', s.value));
+    if (s.sub) row.append(el('div', 'mv-stat-sub', s.sub));
+    stats.append(row);
+  }
+  scroll.append(stats);
+
+  if (data.related?.length) {
+    const chips = el('div', 'mv-related');
+    for (const r of data.related) {
+      const chip = el('button', 'mv-chip', r.label);
+      chip.type = 'button';
+      chip.addEventListener('click', () => {
+        metricView.metric = r.metric;
+        metricView.label = r.label;
+        metricView.data = null;
+        Native.tap('Light');
+        loadMetric();
+      });
+      chips.append(chip);
+    }
+    scroll.append(el('div', 'mv-related-label', 'Related'), chips);
+  }
+
+  const bucket = data.stats?.find((s) => s.label.startsWith('Avg per'))?.label.replace('Avg per ', '');
+  scroll.append(
+    el(
+      'div',
+      'mv-foot',
+      `One point per ${bucket ?? 'bucket'}. The line is green when this period is up on the one before it, red when it is down. Figures come from your Mac's local transcripts.`,
+    ),
+  );
+}
+
+async function loadMetric() {
+  metricView.loading = true;
+  metricView.error = null;
+  renderMetricView();
+  try {
+    const data = await api(
+      `/api/metric-series?metric=${encodeURIComponent(metricView.metric)}&range=${encodeURIComponent(metricView.range)}`,
+    );
+    if (!metricView.open) return;
+    metricView.data = data;
+    metricView.label = data.label;
+  } catch (err) {
+    metricView.error = err.message ?? 'Could not load that chart.';
+  } finally {
+    metricView.loading = false;
+    renderMetricView();
+  }
+}
+
+function openMetricView(metric, label) {
+  metricView.open = true;
+  metricView.metric = metric;
+  metricView.label = label ?? '';
+  metricView.range = state.range;
+  metricView.data = null;
+  const view = $('metricview');
+  view.hidden = false;
+  view.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => view.classList.add('is-open'));
+  Native.tap('Light');
+  loadMetric();
+}
+
+function closeMetricView() {
+  if (!metricView.open) return;
+  metricView.open = false;
+  metricView.data = null;
+  const view = $('metricview');
+  view.classList.remove('is-open');
+  view.setAttribute('aria-hidden', 'true');
+  setTimeout(() => {
+    if (!metricView.open) view.hidden = true;
+  }, 240);
+}
+
 // --------------------------------------------------------------------- shell
 
 const TAB_TITLES = {
@@ -1740,6 +2068,10 @@ function wireUI() {
   });
   $('sheet-scrim').addEventListener('click', closeSheet);
   $('sheet-grip').addEventListener('click', closeSheet);
+  $('mv-back').addEventListener('click', () => {
+    Native.tap('Light');
+    closeMetricView();
+  });
   $('pair-btn').addEventListener('click', () => doPair());
   $('code-input').addEventListener('input', (e) => {
     e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);

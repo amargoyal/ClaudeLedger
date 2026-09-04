@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { fetchAccount, invalidateAccountCache } from './src/anthropic.js';
 import { readConnection } from './src/credentials.js';
-import { buildSnapshot, usageCurve } from './src/aggregate.js';
+import { METRIC_IDS, buildSnapshot, metricSeries, usageCurve } from './src/aggregate.js';
 import { query as queryHistory, span as historySpan } from './src/history.js';
 import { fingerprint, loadEvents } from './src/transcripts.js';
 import {
@@ -233,6 +233,16 @@ export function createApp({ mode = 'local' } = {}) {
           span: historySpan(),
           readings: queryHistory(Number.isFinite(since) ? since : 0),
         });
+        return;
+      }
+      if (url.pathname === '/api/metric-series') {
+        const metric = url.searchParams.get('metric') ?? '';
+        if (!METRIC_IDS.includes(metric)) {
+          sendJSON(res, 400, { error: `metric must be one of ${METRIC_IDS.join(', ')}` });
+          return;
+        }
+        const events = await loadEvents();
+        sendJSON(res, 200, metricSeries(events, { metric, range: url.searchParams.get('range') ?? '7d' }));
         return;
       }
       if (url.pathname === '/api/usage-curve') {
