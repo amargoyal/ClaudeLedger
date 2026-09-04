@@ -133,6 +133,40 @@ if (existsSync(splashDir)) {
   console.log('Splash images written');
 }
 
+// ---------------------------------------------------------- deployment target
+
+/*
+ * Xcode 26 will not build a simulator slice below iOS 15.0, and Capacitor
+ * scaffolds both the project and the Podfile at 14.0. `ios/` is not in the repo,
+ * so this is the only durable place to state the floor: whoever runs
+ * `npm run ios:add` on a fresh checkout gets a project that builds.
+ *
+ * The pods need their own pass. `assertDeploymentTarget` only raises the pods
+ * that ask for less than the podspec minimum, which left most of them at 14.0.
+ */
+const IOS_MIN = '15.0';
+
+const podfile = join(ROOT, 'ios', 'App', 'Podfile');
+if (existsSync(podfile)) {
+  const before = readFileSync(podfile, 'utf8');
+  let after = before.replace(/platform :ios, '1[0-4](\.\d+)?'/, `platform :ios, '${IOS_MIN}'`);
+  if (!after.includes("config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']")) {
+    after = after.replace(
+      /post_install do \|installer\|\n(\s*)assertDeploymentTarget\(installer\)\n/,
+      (m, indent) =>
+        `${m}${indent}installer.pods_project.targets.each do |target|\n` +
+        `${indent}  target.build_configurations.each do |config|\n` +
+        `${indent}    config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '${IOS_MIN}'\n` +
+        `${indent}  end\n` +
+        `${indent}end\n`,
+    );
+  }
+  if (after !== before) {
+    writeFileSync(podfile, after);
+    console.log(`Podfile pinned to iOS ${IOS_MIN} — run \`pod install\` in ios/App`);
+  }
+}
+
 // -------------------------------------------------------------------- version
 
 /*
@@ -144,7 +178,13 @@ const project = join(ROOT, 'ios', 'App', 'App.xcodeproj', 'project.pbxproj');
 if (existsSync(project)) {
   const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
   const before = readFileSync(project, 'utf8');
-  const after = before.replace(/MARKETING_VERSION = [^;]+;/g, `MARKETING_VERSION = ${version};`);
+  /*
+   * `cap sync` rewrites the project back to Capacitor's scaffold target, so the
+   * floor is re-applied here on every sync rather than set once by hand.
+   */
+  const after = before
+    .replace(/MARKETING_VERSION = [^;]+;/g, `MARKETING_VERSION = ${version};`)
+    .replace(/IPHONEOS_DEPLOYMENT_TARGET = 1[0-4](\.\d+)?;/g, `IPHONEOS_DEPLOYMENT_TARGET = ${IOS_MIN};`);
   if (after !== before) {
     writeFileSync(project, after);
     console.log(`MARKETING_VERSION set to ${version}`);
