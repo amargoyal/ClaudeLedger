@@ -6,6 +6,7 @@ const {
   app,
   BrowserWindow,
   Menu,
+  Notification,
   Tray,
   dialog,
   ipcMain,
@@ -70,22 +71,41 @@ const SURFACE = {
  * created with a light `backgroundColor` and then told to go dark flashes white
  * for a frame on every launch.
  */
-function readTheme() {
+function readSettings() {
   try {
-    const theme = JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8')).theme;
-    if (theme === 'light' || theme === 'dark' || theme === 'system') return theme;
+    const parsed = JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
-    /* first run */
+    return {}; // first run
   }
-  return 'system';
 }
 
-function saveTheme(theme) {
+/*
+ * Merged, not replaced. The file held one key for long enough that writing it
+ * whole was the same thing; it holds two now, and a theme change that quietly
+ * turned limit alerts back on would be a genuinely annoying bug to find.
+ */
+function writeSettings(patch) {
   try {
-    fs.writeFileSync(SETTINGS_FILE(), JSON.stringify({ theme }));
+    fs.writeFileSync(SETTINGS_FILE(), JSON.stringify({ ...readSettings(), ...patch }));
   } catch {
     /* non-fatal */
   }
+}
+
+function readTheme() {
+  const theme = readSettings().theme;
+  return theme === 'light' || theme === 'dark' || theme === 'system' ? theme : 'system';
+}
+
+function saveTheme(theme) {
+  writeSettings({ theme });
+}
+
+/** Limit alerts are opt-out on the Mac: the app is already watching, and a
+ * notification about a limit you are actively spending is never a surprise. */
+function limitAlertsOn() {
+  return readSettings().limitAlerts !== false;
 }
 
 /** Window control glyph colour for the Windows overlay, per theme. */
@@ -531,6 +551,97 @@ async function stopSharing() {
   }
 }
 
+// ------------------------------------------------------------- limit alerts
+
+/*
+ * Tell you before a limit does.
+ *
+ * The Mac is already awake and already polling, so unlike the phone this needs
+ * no prediction to fire the first warning: it can wait for the level to actually
+ * cross 80% and say so. The projected warning is the second one, and the only
+ * one that has to reason about the future — a window that will empty before it
+ * refills, which is the case worth interrupting someone over.
+ *
+ * Keyed by window *instance*, not window. `session@2026-09-04T18:00` is a
+ * different thing from the same window tomorrow, and the reset time is what
+ * separates them, so a rollover re-arms both warnings without ever letting one
+ * repeat inside a window.
+ */
+const ALERT_THRESHOLD = 80;
+/** Which warnings have already been sent, per window instance. */
+const sentAlerts = new Set();
+
+function notify(title, body) {
+  if (!Notification.isSupported()) return false;
+  new Notification({ title, body, silent: false }).show();
+  return true;
+}
+
+function windowLabel(key) {
+  if (key === 'session') return 'session';
+  if (key === 'weekly_all') return 'weekly';
+  return key?.startsWith('weekly_scoped:') ? `${key.split(':')[1]} weekly` : 'usage';
+}
+
+function clockAt(ms) {
+  return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function checkLimitAlerts(account) {
+  if (!limitAlertsOn() || account?.status !== 'connected') return;
+
+  for (const window of account.limits?.windows ?? []) {
+    if (window.utilization == null || !window.resetsAt) continue;
+    const instance = `${window.key}@${window.resetsAt}`;
+    const label = windowLabel(window.key);
+    const projection = account.projections?.[window.key];
+
+    // Measured, not predicted. Nothing to be wrong about.
+    if (window.utilization >= ALERT_THRESHOLD && !sentAlerts.has(`${instance}:threshold`)) {
+      sentAlerts.add(`${instance}:threshold`);
+      const left =
+        projection?.willExhaustBeforeReset && burnModule
+          ? `About ${burnModule.shortDuration(projection.minutesToExhaust)} left at ${projection.ratePerHour.toFixed(1)}%/hr.`
+          : `Resets ${clockAt(Date.parse(window.resetsAt))}.`;
+      notify(
+        `${Math.round(window.utilization)}% of your ${label} limit`,
+        left,
+      );
+    }
+
+    // Predicted, and said as a prediction.
+    if (projection?.willExhaustBeforeReset && !sentAlerts.has(`${instance}:runway`)) {
+      sentAlerts.add(`${instance}:runway`);
+      notify(
+        `Your ${label} limit will run out first`,
+        `At ${projection.ratePerHour.toFixed(1)}%/hr it empties around ${clockAt(projection.exhaustsAt)}, before the window resets at ${clockAt(projection.resetsAt)}.`,
+      );
+    }
+  }
+
+  // A window that has rolled over leaves its old keys behind; they are two
+  // strings per window and would otherwise accumulate for as long as the app
+  // runs, which is measured in weeks.
+  if (sentAlerts.size > 64) sentAlerts.clear();
+}
+
+function sendTestNotification() {
+  const session = lastAccount?.limits?.windows?.find((w) => w.key === 'session');
+  const projection = lastAccount?.projections?.session;
+  const body = session?.utilization != null
+    ? `This is what a limit alert looks like. Session is at ${Math.round(session.utilization)}%${
+        projection ? `, moving ${projection.ratePerHour.toFixed(1)}%/hr` : ''
+      }.`
+    : 'This is what a limit alert looks like.';
+  if (!notify('Claude Ledger', body)) {
+    dialog.showMessageBox({
+      type: 'info',
+      message: 'Notifications are unavailable',
+      detail: 'This system will not show notifications for Claude Ledger.',
+    });
+  }
+}
+
 // --------------------------------------------------------------------- menu bar
 
 function planLabel(account) {
@@ -607,6 +718,17 @@ function trayContextMenu() {
       click: () => openPairWindow(),
     },
     { type: 'separator' },
+    {
+      label: 'Notify Me About Limits',
+      type: 'checkbox',
+      checked: limitAlertsOn(),
+      click: (item) => {
+        writeSettings({ limitAlerts: item.checked });
+        if (item.checked) checkLimitAlerts(lastAccount);
+      },
+    },
+    { label: 'Send a Test Notification', click: () => sendTestNotification() },
+    { type: 'separator' },
     { role: 'quit', label: 'Quit Claude Ledger' },
   ]);
 }
@@ -620,6 +742,8 @@ async function refreshTray({ force = false } = {}) {
   } catch (err) {
     lastAccount = { status: 'error', error: err?.message ?? 'Unknown error' };
   }
+
+  checkLimitAlerts(lastAccount);
 
   if (tray && !tray.isDestroyed()) {
     if (isMac) tray.setTitle(trayTitle(lastAccount));
