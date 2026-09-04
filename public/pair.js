@@ -207,6 +207,19 @@ async function poll() {
 }
 
 await poll();
+
+/*
+ * Opening this window is the intent to pair, so it arrives ready: sharing on and
+ * a code already counting down. Requiring the toggle first meant the QR — the
+ * only thing the window is for — was two clicks away every single time.
+ *
+ * Only ever switched on, never off: sharing is the user's setting, and closing
+ * the window already retires the code without retiring the listener.
+ */
+if (!state?.sharing) state = await api.setSharing(true);
+if (state?.sharing && !state.pairing?.active) state = await api.newCode();
+render();
+
 // One second, because the panel shows a live countdown and a device can pair at
 // any moment — both need to appear without the user touching anything.
 setInterval(poll, 1000);
