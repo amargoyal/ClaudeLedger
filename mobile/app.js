@@ -363,6 +363,9 @@ async function syncAlerts() {
 
   try {
     const pending = await plugin.getPending();
+    // 999 is the test notification. It is deliberately below the range these own
+    // so that a refresh landing in the five seconds before it fires does not
+    // cancel the thing someone just asked to see.
     const mine = (pending?.notifications ?? []).filter((n) => n.id >= 1000);
     if (mine.length) await plugin.cancel({ notifications: mine.map((n) => ({ id: n.id })) });
 
@@ -397,6 +400,40 @@ async function enableAlerts() {
     if (!granted) return false;
     localStorage.setItem(KEY_ALERTS, 'on');
     await syncAlerts();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One real notification, a few seconds out.
+ *
+ * Scheduled through the same path as the warnings rather than shown directly,
+ * because what people actually want to know is whether iOS will deliver these —
+ * permission granted, Focus not swallowing them, the app allowed to schedule.
+ * A banner drawn inside the app would answer none of that.
+ */
+async function sendTestAlert() {
+  const plugin = Native.notifications;
+  if (!plugin) return false;
+  try {
+    const current = await plugin.checkPermissions();
+    const granted =
+      current.display === 'granted'
+        ? true
+        : (await plugin.requestPermissions()).display === 'granted';
+    if (!granted) return false;
+    await plugin.schedule({
+      notifications: [
+        {
+          id: 999,
+          title: 'Claude Ledger',
+          body: 'This is what a limit alert looks like. Leave the app to see it on the lock screen.',
+          schedule: { at: new Date(Date.now() + 5000), allowWhileIdle: true },
+        },
+      ],
+    });
     return true;
   } catch {
     return false;
@@ -1079,6 +1116,19 @@ function alertSwitch() {
 
   row.append(label, button);
   wrap.append(row);
+
+  const test = el('button', 'btn ghost', 'Send a test notification');
+  test.type = 'button';
+  test.style.marginTop = '10px';
+  test.addEventListener('click', async () => {
+    Native.tap('Light');
+    test.disabled = true;
+    const sent = await sendTestAlert();
+    test.disabled = false;
+    toast(sent ? 'Arriving in five seconds' : 'Notifications are off for Ledger in Settings');
+  });
+  wrap.append(test);
+
   return wrap;
 }
 
