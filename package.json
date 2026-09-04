@@ -17,7 +17,7 @@
     "dist:unpacked": "npm run icon && electron-builder --mac dir",
     "dist:win": "npm run icon && electron-builder --win nsis --x64 --arm64",
     "dist:win:unpacked": "npm run icon && electron-builder --win dir",
-    "test": "node scripts/qr-selftest.mjs && node scripts/failover-selftest.mjs",
+    "test": "node scripts/qr-selftest.mjs && node scripts/failover-selftest.mjs && node scripts/burn-selftest.mjs",
     "ios:add": "cap add ios && npm run ios:configure",
     "ios:sync": "cap sync ios && npm run ios:configure",
     "ios:configure": "node scripts/ios-configure.mjs",

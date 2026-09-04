@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { record as recordHistory } from './history.js';
+import { projectLimits } from './burn.js';
 import { readCredentials } from './credentials.js';
 
 const BASE = process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com';
@@ -321,6 +322,15 @@ export async function fetchAccount() {
     account: profile.ok ? shapeProfile(profile.value) : null,
     limits,
     burn: computeBurn(limits),
+    /*
+     * Time left in every window, from the readings on disk.
+     *
+     * `burn` is the in-memory version and stays for the popover it already
+     * drives: it covers only the session window and starts again from nothing
+     * every time the app is quit. These survive a restart and cover the weekly
+     * limit too, which is the one that ruins a week rather than an afternoon.
+     */
+    projections: projectLimits(limits),
     sessionHistory: sessionHistory(limits),
     limitsStale: Boolean(usage.ok && usage.stale),
     limitsFetchedAt: usage.ok ? usage.fetchedAt : null,

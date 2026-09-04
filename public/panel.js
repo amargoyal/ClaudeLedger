@@ -167,23 +167,43 @@ function renderUnavailable(account) {
   rows.append(note);
 }
 
+const WINDOW_NAMES = { session: 'session', weekly_all: 'weekly' };
+
+/**
+ * The window that runs out first, if any does.
+ *
+ * Projections come from the readings on disk and cover every window, so the
+ * weekly limit can be the one worth warning about even while the session window
+ * is comfortable — and it is the worse one to walk into, since it ruins a week
+ * rather than an afternoon.
+ */
+function bindingProjection(account) {
+  const rows = Object.values(account?.projections ?? {}).filter((p) => p.willExhaustBeforeReset);
+  if (!rows.length) return null;
+  return rows.sort((a, b) => a.exhaustsAt - b.exhaustsAt)[0];
+}
+
 function renderAlert(account) {
   const alert = $('alert');
-  const burn = account?.burn;
+  // `burn` is the in-memory series and only knows the session window; it stands
+  // in until enough readings are on disk to project from.
+  const projection = bindingProjection(account);
+  const burn = projection ?? (account?.burn?.willExhaustBeforeReset ? account.burn : null);
 
   // Only warn on a measured rate that actually runs out before the window resets.
-  if (!burn || !burn.willExhaustBeforeReset) {
+  if (!burn) {
     alert.hidden = true;
     return;
   }
 
   const mins = burn.minutesToExhaust;
   const when = mins < 60 ? `${Math.max(1, Math.round(mins))}m` : `${(mins / 60).toFixed(1)}h`;
+  const which = WINDOW_NAMES[burn.key] ?? (burn.key?.startsWith('weekly_scoped:') ? burn.key.split(':')[1] : 'session');
   alert.hidden = false;
   clear(alert);
   alert.append(document.createTextNode('at '));
   alert.append(el('b', null, `${burn.ratePerHour.toFixed(1)}%/hr`));
-  alert.append(document.createTextNode(` you'll hit the session limit in ${when}`));
+  alert.append(document.createTextNode(` you'll hit the ${which} limit in ${when}`));
 }
 
 function render(account) {
