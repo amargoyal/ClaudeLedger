@@ -172,7 +172,7 @@ function writeJSON(key, value) {
 // ----------------------------------------------------------------------- state
 
 const state = {
-  conn: readJSON(KEY_CONN), // { baseUrl, token, name, pairedAt }
+  conn: readJSON(KEY_CONN), // { baseUrl, token, name, pairedAt, origins }
   tab: localStorage.getItem(KEY_TAB) ?? 'now',
   range: localStorage.getItem(KEY_RANGE) ?? '7d',
   snapshot: null,
@@ -214,7 +214,7 @@ class ApiError extends Error {
   }
 }
 
-async function api(path, { base, token, method = 'GET', body, timeout = 20_000 } = {}) {
+async function request(path, { base, token, method = 'GET', body, timeout = 20_000 } = {}) {
   const origin = base ?? state.conn?.baseUrl;
   if (!origin) throw new ApiError('Not paired with a Mac yet.', { code: 'unpaired' });
 
@@ -258,6 +258,95 @@ async function api(path, { base, token, method = 'GET', body, timeout = 20_000 }
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Addresses worth trying, current one first, without repeats. */
+function candidateOrigins() {
+  const seen = new Set();
+  const out = [];
+  for (const origin of [state.conn?.baseUrl, ...(state.conn?.origins ?? [])]) {
+    const clean = normalizeBase(origin);
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+  }
+  return out;
+}
+
+/**
+ * Remember where this Mac can be reached, and which of those worked last.
+ *
+ * The list comes from the Mac on every response, so it is re-learned rather than
+ * remembered. That is the whole point: a Cloudflare quick tunnel takes a new
+ * random hostname each time it starts, so a phone that stored one address at
+ * pairing is a phone that works until the Mac is restarted once. Reached over
+ * Wi-Fi at home, it picks up today's tunnel address and keeps working from
+ * cellular that afternoon.
+ */
+function learnOrigins(payload, { used } = {}) {
+  if (!state.conn) return;
+
+  // No list in this response says nothing about the addresses — an error page or
+  // an older Mac carries none — so only a response that brought one may prune.
+  const listed = Array.isArray(payload?.origins);
+  const fresh = listed ? payload.origins.map(normalizeBase).filter(Boolean) : [];
+  const kept = (state.conn.origins ?? []).filter(
+    // A tunnel hostname is single-use: the Mac hands out a new one every time it
+    // starts, so yesterday's is dead and keeping it only costs a timeout on the
+    // way to an address that works. Every other kind of address is stable and is
+    // kept even when this Mac cannot see it right now — a LAN address is still
+    // the right answer when the phone gets home.
+    (origin) => !listed || !origin.includes('.trycloudflare.com') || fresh.includes(origin),
+  );
+  const origins = [...new Set([...fresh, ...kept])].slice(0, 8);
+
+  const same =
+    origins.length === (state.conn.origins?.length ?? 0) &&
+    origins.every((o, i) => o === state.conn.origins[i]);
+  if (same && (!used || used === state.conn.baseUrl)) return;
+
+  state.conn = { ...state.conn, baseUrl: used ?? state.conn.baseUrl, origins };
+  writeJSON(KEY_CONN, state.conn);
+}
+
+/**
+ * A request, against whichever address answers.
+ *
+ * Only a network-layer failure moves on to the next address: a 401 or a 500 is
+ * this Mac answering, and trying the same question elsewhere would turn one
+ * clear error into several vaguer ones. The address that worked is promoted, so
+ * the next call starts where the last one succeeded rather than walking the list
+ * again.
+ */
+async function api(path, options = {}) {
+  if (options.base) return request(path, options);
+
+  const origins = candidateOrigins();
+  if (!origins.length) throw new ApiError('Not paired with a Mac yet.', { code: 'unpaired' });
+
+  let lastError = null;
+  for (const [index, origin] of origins.entries()) {
+    try {
+      // The first address is the one that worked last, so it gets the full
+      // timeout; the fallbacks are being probed and should not each cost twenty
+      // seconds before the phone can say it is offline.
+      const payload = await request(path, {
+        ...options,
+        base: origin,
+        timeout: index === 0 ? options.timeout : Math.min(options.timeout ?? 20_000, 6000),
+      });
+      learnOrigins(payload, { used: origin });
+      return payload;
+    } catch (err) {
+      const reachable = err.status > 0;
+      if (reachable) {
+        learnOrigins(null, { used: origin });
+        throw err;
+      }
+      lastError = err;
+    }
+  }
+  throw lastError;
 }
 
 // ---------------------------------------------------------------- limit alerts
@@ -1428,6 +1517,10 @@ function renderYou(view) {
   const dl2 = el('dl');
   dl2.style.margin = '0';
   dl2.append(kv('Address', state.conn?.baseUrl ?? 'not paired'));
+  // The count, not the list: the addresses are the app's business, and the one
+  // thing worth knowing is whether there is a way home other than this Wi-Fi.
+  const spare = candidateOrigins().length - 1;
+  if (spare > 0) dl2.append(kv('Also reachable at', plural(spare, 'address')));
   dl2.append(kv('Paired', state.conn?.pairedAt ? ago(state.conn.pairedAt) : '—'));
   dl2.append(kv('Last sync', state.cachedAt ? ago(state.cachedAt) : '—'));
   if (snap?.meta) {
@@ -2149,6 +2242,10 @@ async function doPair() {
       deviceId: result.device?.id ?? null,
       name: result.device?.name ?? name,
       pairedAt: Date.now(),
+      // Every way back to this Mac, not only the one it was paired on. The
+      // address used here answers on exactly the network the phone is on right
+      // now, which is the narrowest moment in the app's life.
+      origins: (result.origins ?? []).map(normalizeBase).filter(Boolean),
     };
     writeJSON(KEY_CONN, state.conn);
     Native.notify('Success');
