@@ -133,6 +133,92 @@ if (existsSync(splashDir)) {
   console.log('Splash images written');
 }
 
+// ------------------------------------------------------------ scene lifecycle
+
+/*
+ * iOS 26 made UIScene adoption mandatory. An app built against that SDK which
+ * still launches through UIApplicationDelegate alone traps at startup inside
+ * `__UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption` — a bare
+ * EXC_BREAKPOINT in AppDelegate.swift with the launch screen left on screen.
+ *
+ * Capacitor 7.6 still ships the pre-scene template, so the adoption is added
+ * here. The delegate lives inside AppDelegate.swift rather than its own file so
+ * that no entry has to be spliced into project.pbxproj to compile it.
+ */
+const SCENE_MARK = '// --- claude-ledger: UIScene adoption';
+
+const appDelegate = join(ROOT, 'ios', 'App', 'App', 'AppDelegate.swift');
+if (existsSync(appDelegate)) {
+  const before = readFileSync(appDelegate, 'utf8');
+  if (!before.includes(SCENE_MARK)) {
+    const scene = `
+${SCENE_MARK} (added by scripts/ios-configure.mjs) ---
+/*
+ * UIKit owns the window and the storyboard here; this delegate exists to satisfy
+ * scene adoption and to keep the \`claudeledger://pair\` links working, which
+ * arrive through the scene rather than through UIApplicationDelegate once scenes
+ * are in play. Capacitor's proxy is what its plugins listen to.
+ */
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        guard scene is UIWindowScene else { return }
+        if let url = connectionOptions.urlContexts.first?.url {
+            _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, open: url, options: [:])
+        }
+    }
+
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        guard let url = URLContexts.first?.url else { return }
+        _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, open: url, options: [:])
+    }
+
+    func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+        _ = ApplicationDelegateProxy.shared.application(
+            UIApplication.shared,
+            continue: userActivity,
+            restorationHandler: { _ in }
+        )
+    }
+}
+`;
+    writeFileSync(appDelegate, `${before.trimEnd()}\n${scene}`);
+    console.log('SceneDelegate added to AppDelegate.swift');
+  }
+}
+
+const infoPlist = join(ROOT, 'ios', 'App', 'App', 'Info.plist');
+if (existsSync(infoPlist)) {
+  const before = readFileSync(infoPlist, 'utf8');
+  if (!before.includes('UIApplicationSceneManifest')) {
+    const manifest = [
+      '\t<key>UIApplicationSceneManifest</key>',
+      '\t<dict>',
+      '\t\t<key>UIApplicationSupportsMultipleScenes</key>',
+      '\t\t<false/>',
+      '\t\t<key>UISceneConfigurations</key>',
+      '\t\t<dict>',
+      '\t\t\t<key>UIWindowSceneSessionRoleApplication</key>',
+      '\t\t\t<array>',
+      '\t\t\t\t<dict>',
+      '\t\t\t\t\t<key>UISceneConfigurationName</key>',
+      '\t\t\t\t\t<string>Default Configuration</string>',
+      '\t\t\t\t\t<key>UISceneDelegateClassName</key>',
+      '\t\t\t\t\t<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>',
+      '\t\t\t\t\t<key>UISceneStoryboardFile</key>',
+      '\t\t\t\t\t<string>Main</string>',
+      '\t\t\t\t</dict>',
+      '\t\t\t</array>',
+      '\t\t</dict>',
+      '\t</dict>',
+      '</dict>',
+    ].join('\n');
+    writeFileSync(infoPlist, before.replace(/<\/dict>\s*<\/plist>\s*$/, `${manifest}\n</plist>\n`));
+    console.log('UIApplicationSceneManifest added to Info.plist');
+  }
+}
+
 // ---------------------------------------------------------- deployment target
 
 /*
