@@ -149,8 +149,13 @@ const SCENE_MARK = '// --- claude-ledger: UIScene adoption';
 
 const appDelegate = join(ROOT, 'ios', 'App', 'App', 'AppDelegate.swift');
 if (existsSync(appDelegate)) {
-  const before = readFileSync(appDelegate, 'utf8');
-  if (!before.includes(SCENE_MARK)) {
+  const current = readFileSync(appDelegate, 'utf8');
+  // Rewritten rather than skipped when it is already there: this block changes,
+  // and a stale copy from an earlier run would silently outlive the fix.
+  const before = current.includes(SCENE_MARK)
+    ? current.slice(0, current.indexOf(SCENE_MARK)).trimEnd()
+    : current;
+  {
     const scene = `
 ${SCENE_MARK} (added by scripts/ios-configure.mjs) ---
 /*
@@ -163,9 +168,48 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
-        guard scene is UIWindowScene else { return }
+        guard let windowScene = scene as? UIWindowScene else { return }
+        // The web view is created when the bridge controller loads its view,
+        // which has not happened yet.
+        DispatchQueue.main.async { [weak self] in
+            self?.paintChrome(windowScene)
+        }
         if let url = connectionOptions.urlContexts.first?.url {
             _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, open: url, options: [:])
+        }
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        guard let windowScene = scene as? UIWindowScene else { return }
+        paintChrome(windowScene)
+    }
+
+    /*
+     * Hand the safe areas to the page.
+     *
+     * Capacitor paints the web view with the ios.backgroundColor config — one static
+     * colour, so on a phone in dark mode the strip behind the status bar stayed
+     * paper white while everything the page drew was ink. Clearing the web view
+     * lets the page's own background cover that strip, which means it follows the
+     * app's Appearance setting rather than only the system's.
+     *
+     * The window keeps a colour of its own for the one place the page cannot
+     * reach: the rubber band at the end of a scroll.
+     */
+    private func paintChrome(_ windowScene: UIWindowScene) {
+        let paper = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0x16 / 255, green: 0x13 / 255, blue: 0x0F / 255, alpha: 1)
+                : UIColor(red: 0xF6 / 255, green: 0xF1 / 255, blue: 0xE8 / 255, alpha: 1)
+        }
+        let windows = window.map { [$0] } ?? windowScene.windows
+        for window in windows {
+            window.backgroundColor = paper
+            window.rootViewController?.view.backgroundColor = paper
+            guard let bridge = window.rootViewController as? CAPBridgeViewController else { continue }
+            bridge.webView?.isOpaque = false
+            bridge.webView?.backgroundColor = .clear
+            bridge.webView?.scrollView.backgroundColor = .clear
         }
     }
 
@@ -183,8 +227,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 }
 `;
-    writeFileSync(appDelegate, `${before.trimEnd()}\n${scene}`);
-    console.log('SceneDelegate added to AppDelegate.swift');
+    const next = `${before.trimEnd()}\n${scene}`;
+    if (next !== current) {
+      writeFileSync(appDelegate, next);
+      console.log('SceneDelegate written to AppDelegate.swift');
+    }
   }
 }
 
