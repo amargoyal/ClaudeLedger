@@ -8,6 +8,7 @@ import { readConnection } from './src/credentials.js';
 import { METRIC_IDS, buildSnapshot, metricSeries, usageCurve } from './src/aggregate.js';
 import { query as queryHistory, span as historySpan } from './src/history.js';
 import { fingerprint, loadEvents } from './src/transcripts.js';
+import { tunnelState } from './src/tunnel.js';
 import {
   lanAddresses,
   listDevices,
@@ -85,6 +86,40 @@ async function serveStatic(res, pathname, dir, indexFile = 'index.html') {
   }
 }
 
+/*
+ * Every address this Mac can be reached on, best first.
+ *
+ * The phone stores the list rather than the one address it happened to pair on.
+ * That address was only ever right for one network: a LAN address is nothing
+ * from cellular, and a Cloudflare quick tunnel takes a new random hostname every
+ * time it starts, so a phone holding one string is a phone that works until the
+ * Mac is restarted once.
+ *
+ * The tunnel goes first because it is the only entry that answers from anywhere.
+ * The LAN addresses follow, since they answer fastest where they answer at all.
+ * Every response the phone can reach carries this, so the list is re-learned
+ * rather than remembered — come home, connect over Wi-Fi, and today's tunnel
+ * address arrives with the next snapshot.
+ */
+/** The port the phone-facing listener is on, or null while it is off. */
+let lanPort = null;
+
+function reachableOrigins(port) {
+  const origins = [];
+  const tunnel = tunnelState();
+  if (tunnel.running && tunnel.origin) origins.push(tunnel.origin);
+  if (port) {
+    for (const { address } of lanAddresses()) {
+      // 169.254/16 is what an interface gives itself when no DHCP answered. It
+      // is never an address another device can reach, and on the phone it costs
+      // a timeout on the way to one that works.
+      if (address.startsWith('169.254.')) continue;
+      origins.push(`http://${address}:${port}`);
+    }
+  }
+  return origins;
+}
+
 async function handleSnapshot(url, res) {
   const range = url.searchParams.get('range') ?? '7d';
   const weeksRaw = Number.parseInt(url.searchParams.get('weeks') ?? '26', 10);
@@ -101,6 +136,7 @@ async function handleSnapshot(url, res) {
     snapshot: buildSnapshot(events, { range, weeks }),
     account,
     app: { version: APP_VERSION },
+    origins: reachableOrigins(lanPort),
   });
 }
 
@@ -183,6 +219,7 @@ export function createApp({ mode = 'local' } = {}) {
           app: 'claude-ledger',
           version: APP_VERSION,
           pairing: pairingState().active,
+          origins: reachableOrigins(lanPort),
         });
         return;
       }
@@ -201,7 +238,11 @@ export function createApp({ mode = 'local' } = {}) {
           sendJSON(res, 403, { error: result.error });
           return;
         }
-        sendJSON(res, 200, { ...result, host: req.headers.host ?? null });
+        sendJSON(res, 200, {
+          ...result,
+          host: req.headers.host ?? null,
+          origins: reachableOrigins(lanPort),
+        });
         return;
       }
       if (url.pathname === '/api/devices') {
@@ -346,13 +387,15 @@ export function startLanServer({ port = Number(process.env.LEDGER_LAN_PORT ?? 43
     });
     server.listen(port, '0.0.0.0', () => {
       const addr = server.address();
+      lanPort = typeof addr === 'object' && addr ? addr.port : port;
       resolve({
         server,
-        port: typeof addr === 'object' && addr ? addr.port : port,
+        port: lanPort,
         addresses: lanAddresses(),
         stop: () =>
           new Promise((done) => {
             clearInterval(flush);
+            lanPort = null;
             persistLastSeen();
             server.close(() => done());
             // close() waits for keep-alive sockets, and the phone holds one open
