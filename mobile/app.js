@@ -1697,6 +1697,9 @@ function openDaySheet(day) {
  * from the snapshot, because the snapshot only carries a 12-point sparkline and
  * because changing the range in here must not reload every other panel.
  */
+/** Chart modes, in the order the segmented control offers them. */
+const METRIC_MODES = ['each', 'running', 'cumulative'];
+
 const metricView = {
   open: false,
   metric: null,
@@ -1705,7 +1708,9 @@ const metricView = {
   // Unlike the range, which follows whatever the Usage tab was showing, this is
   // a way of reading rather than a choice about what to read — so it sticks
   // until it is changed, across charts and across launches.
-  mode: localStorage.getItem(KEY_METRIC_MODE) === 'running' ? 'running' : 'each',
+  mode: METRIC_MODES.includes(localStorage.getItem(KEY_METRIC_MODE))
+    ? localStorage.getItem(KEY_METRIC_MODE)
+    : 'each',
   data: null,
   loading: false,
   error: null,
@@ -1770,17 +1775,32 @@ function metricChart(data, width, onScrub) {
 
   const wrap = el('div', 'mv-chart');
   const values = data.values ?? [];
-  if (!values.length || values.every((v) => v === 0)) {
+  // Emptiness is a fact about the range, not about the line. A cumulative line
+  // over a quiet window is a flat run at a large number, and every point on it
+  // is non-zero — so the raw buckets are what get asked.
+  const recorded = data.rawValues ?? values;
+  if (!values.length || recorded.every((v) => v === 0)) {
     wrap.append(el('div', 'empty', `Nothing recorded in this range.`));
     return wrap;
   }
 
   const node = svg('svg', { class: 'mv-svg', viewBox: `0 0 ${W} ${H}`, width: '100%', height: H });
   const stroke = trendColor(data);
-  const max = Math.max(...values, 1);
+  /*
+   * The vertical scale starts at zero, except when the line does not.
+   *
+   * A cumulative line carries in everything from before the window, so on a
+   * five-hour view it might run from $3,800 to $3,900 — against a zero baseline
+   * that is a flat line pinned to the top of the chart, and the whole afternoon
+   * of climbing is invisible. Anchoring it to the line's own floor makes the
+   * shape readable again. Every other mode starts at zero, where `lo` is 0 and
+   * this is the scale it has always used.
+   */
+  const lo = data.cumulative ? Math.min(...values) : 0;
+  const hi = Math.max(...values, lo + 1);
   const n = values.length;
   const x = (i) => PAD_X + (i / Math.max(1, n - 1)) * (W - PAD_X * 2);
-  const y = (v) => H - PAD_B - (v / max) * (H - PAD_T - PAD_B);
+  const y = (v) => H - PAD_B - ((v - lo) / (hi - lo)) * (H - PAD_T - PAD_B);
   const pts = values.map((v, i) => ({ x: x(i), y: y(v) }));
 
   const gid = `mv-grad-${(gradientSeq += 1)}`;
@@ -1883,23 +1903,36 @@ function metricChart(data, width, onScrub) {
 
 function metricHeadline(data) {
   const head = el('div', 'mv-head');
-  const value = el('div', 'mv-value', data.totalText);
+  /*
+   * The number the line actually ends at.
+   *
+   * In every other mode that is the range total. In `cumulative` it is the
+   * all-time figure, because the line carries everything from before the window
+   * — and a headline reading $3,909 above a line ending at $12,400 would just
+   * look like a bug.
+   */
+  const restText = data.cumulative
+    ? (data.format === 'money' ? fmtMoney : fmtCount)(data.values.at(-1) ?? 0)
+    : data.totalText;
+  const value = el('div', 'mv-value', restText);
   const meta = el('div', 'mv-meta');
-  if (data.delta) {
-    meta.append(el('span', `mv-delta ${data.delta.positive ? 'up' : 'down'}`, data.delta.text));
-  }
-  meta.append(el('span', 'mv-when', data.rangeLabel));
+  const fillMeta = () => {
+    clear(meta);
+    // A period-over-period delta says nothing about a total that spans all of
+    // history, so it is left out of the mode that shows one.
+    if (data.delta && !data.cumulative) {
+      meta.append(el('span', `mv-delta ${data.delta.positive ? 'up' : 'down'}`, data.delta.text));
+    }
+    meta.append(el('span', 'mv-when', data.cumulative ? 'all time' : data.rangeLabel));
+  };
+  fillMeta();
   head.append(el('div', 'mv-label', data.label), value, meta);
 
   /** Swapped in while a finger is down, then swapped back on release. */
   head.showBucket = (i) => {
     if (i == null) {
-      value.textContent = data.totalText;
-      clear(meta);
-      if (data.delta) {
-        meta.append(el('span', `mv-delta ${data.delta.positive ? 'up' : 'down'}`, data.delta.text));
-      }
-      meta.append(el('span', 'mv-when', data.rangeLabel));
+      value.textContent = restText;
+      fillMeta();
       return;
     }
     const raw = data.values[i] ?? 0;
@@ -1930,23 +1963,30 @@ function metricRanges(data) {
 }
 
 /*
- * Two ways to read the same numbers.
+ * Three ways to read the same numbers.
  *
  * `each` is what the chart has always drawn: how much happened inside each
  * bucket. It answers "when was I busy", and it is the honest shape of the data.
  *
  * `running` adds each bucket to the one before it, so the line climbs through
  * the day the way a meter does — $0 at midnight, $100 by ten at night. It
- * answers a different question: not "when", but "how much so far".
+ * answers a different question: not "when", but "how much so far today".
  *
- * A running total with no reset only ever goes up, which makes every day after
- * the first unreadable — the interesting part is a wiggle on top of a number
- * that dwarfs it. So it restarts at local midnight, and the chart marks where.
+ * A running total that never restarts makes every day after the first
+ * unreadable: the interesting part becomes a wiggle on top of a number that
+ * dwarfs it. So `running` restarts at local midnight, and the chart marks where.
  * The single exception is a range whose buckets are already a day or more wide,
  * which only happens on ALL over a long history: a daily reset there would put
- * one point in each day and draw nothing, so ALL keeps the true running total
- * from the first day recorded, which is the one place a line that only rises is
- * exactly the thing being asked for.
+ * one point in each day and draw nothing, so ALL keeps the total running from
+ * the first day recorded.
+ *
+ * `cumulative` is the odometer. It never resets, on any range, ever. That means
+ * it cannot start from zero on a five-hour window — it starts from everything
+ * this metric had already counted before the window opened, which is why the
+ * Mac sends `priorTotal`. Without that offset the word "cumulative" would mean
+ * a different thing on each range, and the number under your finger would drop
+ * every time you switched from 30D to 5H. Long flat stretches are the point
+ * here rather than a defect: nothing happened, so the line does not move.
  */
 const RESET_DAILY_MAX_BUCKET_MS = 6 * 3_600_000;
 
@@ -1969,18 +2009,26 @@ function dayKey(ts) {
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
-/** Running totals, restarting each local day unless the buckets are too wide. */
-function runningSeries(data) {
+/**
+ * Running totals.
+ *
+ * `daily: true` restarts at each local midnight. `from` seeds the first bucket,
+ * which is how the never-resetting mode carries in everything that came before
+ * the window — a reset, when one happens, drops back to zero rather than to it,
+ * but the two options are never combined.
+ */
+function runningSeries(data, { daily, from = 0 } = {}) {
   const values = data.values ?? [];
   const stamps = data.stamps ?? [];
-  const daily = (data.bucketMs ?? 0) > 0 && data.bucketMs <= RESET_DAILY_MAX_BUCKET_MS;
+  const resetsDaily =
+    daily ?? ((data.bucketMs ?? 0) > 0 && data.bucketMs <= RESET_DAILY_MAX_BUCKET_MS);
 
   const out = new Array(values.length);
   const resets = [];
-  let sum = 0;
+  let sum = from;
   let day = null;
   for (let i = 0; i < values.length; i += 1) {
-    if (daily) {
+    if (resetsDaily) {
       const key = dayKey(stamps[i]);
       if (day !== null && key !== day) {
         sum = 0;
@@ -1991,7 +2039,7 @@ function runningSeries(data) {
     sum += values[i];
     out[i] = sum;
   }
-  return { values: out, resets, daily };
+  return { values: out, resets, daily: resetsDaily };
 }
 
 /**
@@ -2002,16 +2050,28 @@ function runningSeries(data) {
  * whatever was last fetched.
  */
 function metricModeData(data) {
-  if (metricView.mode !== 'running') return data;
-  const { values, resets, daily } = runningSeries(data);
-  return { ...data, values, rawValues: data.values, resets, running: true, resetsDaily: daily };
+  if (metricView.mode === 'running') {
+    const { values, resets, daily } = runningSeries(data);
+    return { ...data, values, rawValues: data.values, resets, running: true, resetsDaily: daily };
+  }
+  if (metricView.mode === 'cumulative') {
+    // `priorTotal` is absent from a Mac running an older build. Falling back to
+    // zero draws a line that still only rises, just from the window's own start
+    // — wrong on the absolute figure, right on the shape, and it fixes itself
+    // the moment the Mac is updated.
+    const from = Number.isFinite(data.priorTotal) ? data.priorTotal : 0;
+    const { values } = runningSeries(data, { daily: false, from });
+    return { ...data, values, rawValues: data.values, running: true, cumulative: true };
+  }
+  return data;
 }
 
 function metricModes(data) {
   const wrap = el('div', 'segmented mv-modes');
   const modes = [
     { id: 'each', label: `Per ${bucketLabel(data.bucketMs ?? 3_600_000)}` },
-    { id: 'running', label: 'Running' },
+    { id: 'running', label: 'Daily' },
+    { id: 'cumulative', label: 'Cumulative' },
   ];
   for (const m of modes) {
     const btn = el('button', m.id === metricView.mode ? 'is-active' : null, m.label);
@@ -2089,11 +2149,13 @@ function renderMetricView() {
   // The stats above are always about the raw buckets, whichever way the line is
   // drawn. Saying so is cheaper than recomputing six figures per mode, and it is
   // also the more useful pair of readings to have side by side.
-  const shape = data.running
-    ? data.resetsDaily
-      ? `A running total, starting again at midnight each day. The figures below still describe single ${bucket ?? 'bucket'} buckets.`
-      : `A running total from the first day recorded — the buckets here are ${bucket ?? 'wide'}, too wide to restart daily. The figures below still describe single buckets.`
-    : `One point per ${bucket ?? 'bucket'}.`;
+  const shape = data.cumulative
+    ? `Everything counted since your first day, carried in from before this window and never reset. Flat stretches are quiet time. The figures below describe this ${data.rangeLabel.toLowerCase()} only, in single ${bucket ?? 'bucket'} buckets.`
+    : data.running
+      ? data.resetsDaily
+        ? `A running total, starting again at midnight each day. The figures below still describe single ${bucket ?? 'bucket'} buckets.`
+        : `A running total from the first day recorded — the buckets here are ${bucket ?? 'wide'}, too wide to restart daily. The figures below still describe single buckets.`
+      : `One point per ${bucket ?? 'bucket'}.`;
   scroll.append(
     el(
       'div',

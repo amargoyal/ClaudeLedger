@@ -116,6 +116,41 @@ pass &= check('label: minutes', bucketLabel(10 * 60_000), '10 min');
 pass &= check('label: hours', bucketLabel(HOUR), '1h');
 pass &= check('label: days', bucketLabel(48 * HOUR), '2d');
 
+// ------------------------------------------------------- never resetting
+
+/*
+ * The odometer mode. `daily: false` regardless of bucket width, and seeded with
+ * everything counted before the window opened.
+ */
+const odo = runningSeries(twoDays, { daily: false, from: 1000 });
+pass &= check('carries in what came before', odo.values[0], 1001);
+pass &= check('never resets at midnight', odo.resets, []);
+pass &= check('and keeps climbing across the boundary', odo.values[24] > odo.values[23], true);
+pass &= check(
+  'ends at the prior total plus the range total',
+  odo.values.at(-1),
+  1000 + twoDays.values.reduce((a, b) => a + b, 0),
+);
+pass &= check('rises or holds, never falls', odo.values.every((v, i, a) => i === 0 || v >= a[i - 1]), true);
+
+// A quiet window is a flat run at a large number, not a run of zeroes.
+const quiet = runningSeries(hourly('2026-06-01T00:00:00-04:00', [0, 0, 0, 0]), {
+  daily: false,
+  from: 4200,
+});
+pass &= check('quiet time holds its value', quiet.values, [4200, 4200, 4200, 4200]);
+
+// Wide buckets are a reason to skip the daily reset, never a reason to apply
+// one — the caller asking for no resets must win either way.
+pass &= check('wide buckets still never reset', runningSeries(wide, { daily: false, from: 7 }).resets, []);
+
+// No seed is the same series the window would draw on its own.
+pass &= check(
+  'without a prior total it starts from the window',
+  runningSeries(twoDays, { daily: false }).values[0],
+  twoDays.values[0],
+);
+
 // -------------------------------------------------------------------- totals
 
 /*
