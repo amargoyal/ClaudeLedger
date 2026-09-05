@@ -149,6 +149,7 @@ const KEY_CACHE = 'ledger.mobile.cache';
 const KEY_TAB = 'ledger.mobile.tab';
 const KEY_RANGE = 'ledger.mobile.range';
 const KEY_ALERTS = 'ledger.mobile.alerts';
+const KEY_METRIC_MODE = 'ledger.mobile.metricmode';
 
 function readJSON(key) {
   try {
@@ -1701,6 +1702,10 @@ const metricView = {
   metric: null,
   label: '',
   range: state.range,
+  // Unlike the range, which follows whatever the Usage tab was showing, this is
+  // a way of reading rather than a choice about what to read — so it sticks
+  // until it is changed, across charts and across launches.
+  mode: localStorage.getItem(KEY_METRIC_MODE) === 'running' ? 'running' : 'each',
   data: null,
   loading: false,
   error: null,
@@ -1711,7 +1716,10 @@ const RANGE_SHORT = { '5h': '5H', today: '1D', '7d': '7D', '30d': '30D', all: 'A
 /** Up is green, down is the hot colour — the direction, not the metric, decides. */
 function trendColor(data) {
   if (data?.delta) return color(data.delta.positive ? '--green' : '--hot');
-  const v = data?.values ?? [];
+  // The raw buckets, never the running total: a running total's second half is
+  // always the larger, so reading its halves would paint every chart green in
+  // exactly the cases where there is no delta to fall back on.
+  const v = data?.rawValues ?? data?.values ?? [];
   if (v.length < 2) return color('--accent');
   const half = Math.floor(v.length / 2);
   const first = v.slice(0, half).reduce((a, b) => a + b, 0);
@@ -1805,6 +1813,16 @@ function metricChart(data, width, onScrub) {
     }),
   );
 
+  // Where a running total starts again. Drawn only while they are countable —
+  // past a handful the line's own sawtooth says it better than thirty rules do.
+  if (data.resets?.length && data.resets.length <= 8) {
+    for (const i of data.resets) {
+      node.append(
+        svg('line', { class: 'mv-reset', x1: x(i), x2: x(i), y1: PAD_T - 6, y2: H - PAD_B }),
+      );
+    }
+  }
+
   // Ends of the window, so a scrubbed reading has something to sit between.
   const edge = (i, anchor) => {
     const t = svg('text', { class: 'mv-axis', x: anchor === 'start' ? PAD_X : W - PAD_X, y: H - 8, 'text-anchor': anchor });
@@ -1887,7 +1905,10 @@ function metricHeadline(data) {
     const raw = data.values[i] ?? 0;
     value.textContent = data.format === 'money' ? fmtMoney(raw) : fmtCount(raw);
     clear(meta);
-    meta.append(el('span', 'mv-when', scrubStamp(data.stamps[i], data.bucketMs)));
+    // "by 10:00 PM" rather than "10:00 PM": a running total is the figure up to
+    // that moment, not the figure at it, and the two read very differently.
+    const when = scrubStamp(data.stamps[i], data.bucketMs);
+    meta.append(el('span', 'mv-when', data.running ? `by ${when}` : when));
   };
   return head;
 }
@@ -1908,6 +1929,106 @@ function metricRanges(data) {
   return wrap;
 }
 
+/*
+ * Two ways to read the same numbers.
+ *
+ * `each` is what the chart has always drawn: how much happened inside each
+ * bucket. It answers "when was I busy", and it is the honest shape of the data.
+ *
+ * `running` adds each bucket to the one before it, so the line climbs through
+ * the day the way a meter does — $0 at midnight, $100 by ten at night. It
+ * answers a different question: not "when", but "how much so far".
+ *
+ * A running total with no reset only ever goes up, which makes every day after
+ * the first unreadable — the interesting part is a wiggle on top of a number
+ * that dwarfs it. So it restarts at local midnight, and the chart marks where.
+ * The single exception is a range whose buckets are already a day or more wide,
+ * which only happens on ALL over a long history: a daily reset there would put
+ * one point in each day and draw nothing, so ALL keeps the true running total
+ * from the first day recorded, which is the one place a line that only rises is
+ * exactly the thing being asked for.
+ */
+const RESET_DAILY_MAX_BUCKET_MS = 6 * 3_600_000;
+
+/** Bucket width in the same words the stats underneath use. */
+function bucketLabel(ms) {
+  const min = Math.round(ms / 60_000);
+  if (min < 60) return `${min} min`;
+  const h = Math.round(min / 60);
+  return h < 24 ? `${h}h` : `${Math.round(h / 24)}d`;
+}
+
+/**
+ * Local calendar day of a timestamp.
+ *
+ * Compared as a key rather than by subtracting 24 hours, so the boundary lands
+ * on midnight through daylight-saving changes, when a day is 23 or 25 hours long.
+ */
+function dayKey(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+/** Running totals, restarting each local day unless the buckets are too wide. */
+function runningSeries(data) {
+  const values = data.values ?? [];
+  const stamps = data.stamps ?? [];
+  const daily = (data.bucketMs ?? 0) > 0 && data.bucketMs <= RESET_DAILY_MAX_BUCKET_MS;
+
+  const out = new Array(values.length);
+  const resets = [];
+  let sum = 0;
+  let day = null;
+  for (let i = 0; i < values.length; i += 1) {
+    if (daily) {
+      const key = dayKey(stamps[i]);
+      if (day !== null && key !== day) {
+        sum = 0;
+        resets.push(i);
+      }
+      day = key;
+    }
+    sum += values[i];
+    out[i] = sum;
+  }
+  return { values: out, resets, daily };
+}
+
+/**
+ * The data the chart should draw, given the mode.
+ *
+ * A copy rather than a mutation: `metricView.data` stays the server's answer, so
+ * switching modes is a redraw and never a reload, and it works just as well on
+ * whatever was last fetched.
+ */
+function metricModeData(data) {
+  if (metricView.mode !== 'running') return data;
+  const { values, resets, daily } = runningSeries(data);
+  return { ...data, values, rawValues: data.values, resets, running: true, resetsDaily: daily };
+}
+
+function metricModes(data) {
+  const wrap = el('div', 'segmented mv-modes');
+  const modes = [
+    { id: 'each', label: `Per ${bucketLabel(data.bucketMs ?? 3_600_000)}` },
+    { id: 'running', label: 'Running' },
+  ];
+  for (const m of modes) {
+    const btn = el('button', m.id === metricView.mode ? 'is-active' : null, m.label);
+    btn.type = 'button';
+    btn.addEventListener('click', () => {
+      if (metricView.mode === m.id) return;
+      metricView.mode = m.id;
+      localStorage.setItem(KEY_METRIC_MODE, m.id);
+      Native.tap('Light');
+      // No fetch: the mode is a transform of numbers already in hand.
+      renderMetricView();
+    });
+    wrap.append(btn);
+  }
+  return wrap;
+}
+
 function renderMetricView() {
   const scroll = $('mv-scroll');
   $('mv-top-title').textContent = metricView.label;
@@ -1922,12 +2043,21 @@ function renderMetricView() {
     return;
   }
 
-  const data = metricView.data;
+  const data = metricModeData(metricView.data);
   const head = metricHeadline(data);
   scroll.append(head);
   scroll.append(metricChart(data, scroll.clientWidth - 32, (i) => head.showBucket(i)));
+  scroll.append(metricModes(data));
   scroll.append(metricRanges(data));
-  scroll.append(el('div', 'mv-hint', 'Touch and hold the chart to read a moment.'));
+  scroll.append(
+    el(
+      'div',
+      'mv-hint',
+      data.running
+        ? 'Touch and hold the chart to read the total up to that moment.'
+        : 'Touch and hold the chart to read a moment.',
+    ),
+  );
 
   const stats = el('div', 'mv-stats');
   for (const s of data.stats ?? []) {
@@ -1956,11 +2086,19 @@ function renderMetricView() {
   }
 
   const bucket = data.stats?.find((s) => s.label.startsWith('Avg per'))?.label.replace('Avg per ', '');
+  // The stats above are always about the raw buckets, whichever way the line is
+  // drawn. Saying so is cheaper than recomputing six figures per mode, and it is
+  // also the more useful pair of readings to have side by side.
+  const shape = data.running
+    ? data.resetsDaily
+      ? `A running total, starting again at midnight each day. The figures below still describe single ${bucket ?? 'bucket'} buckets.`
+      : `A running total from the first day recorded — the buckets here are ${bucket ?? 'wide'}, too wide to restart daily. The figures below still describe single buckets.`
+    : `One point per ${bucket ?? 'bucket'}.`;
   scroll.append(
     el(
       'div',
       'mv-foot',
-      `One point per ${bucket ?? 'bucket'}. The line is green when this period is up on the one before it, red when it is down. Figures come from your Mac's local transcripts.`,
+      `${shape} The line is green when this period is up on the one before it, red when it is down. Figures come from your Mac's local transcripts.`,
     ),
   );
 }
