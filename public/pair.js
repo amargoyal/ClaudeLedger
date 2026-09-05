@@ -71,16 +71,14 @@ function renderTailscale() {
   const pill = $('tailscale-status');
   const on = Boolean(ts.running && ts.address);
 
-  pill.textContent = on ? 'On' : ts.running ? 'No address' : ts.installed ? 'Off' : 'Not installed';
+  pill.textContent = on ? 'On' : ts.installed ? 'Off' : 'Not installed';
   pill.classList.toggle('is-on', on);
 
-  $('tailscale-sub').textContent = !ts.installed
-    ? 'Not installed. Install it here and on your phone for an address that answers from anywhere and never changes.'
-    : on
-      ? `This Mac answers at ${ts.address} from anywhere your phone has Tailscale on.`
-      : ts.running
-        ? 'Running, but with no tailnet address yet. Sign in to your tailnet.'
-        : 'Installed but not connected. Turn Tailscale on to reach this Mac from cellular.';
+  $('tailscale-sub').textContent = on
+    ? `This Mac answers at ${ts.address} from anywhere your phone has Tailscale on.`
+    : ts.installed
+      ? 'Installed but not connected. Turn Tailscale on to reach this Mac from cellular.'
+      : 'Not installed. Install it here and on your phone for an address that answers from anywhere and never changes.';
 }
 
 function renderRelay() {

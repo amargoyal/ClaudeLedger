@@ -9,7 +9,7 @@ import { METRIC_IDS, buildSnapshot, metricSeries, usageCurve } from './src/aggre
 import { query as queryHistory, span as historySpan } from './src/history.js';
 import { fingerprint, loadEvents } from './src/transcripts.js';
 import { refreshTunnel, tunnelState } from './src/tunnel.js';
-import { refreshTailscale, tailscaleState } from './src/tailscale.js';
+import { tailscaleState } from './src/tailscale.js';
 import {
   lanAddresses,
   listDevices,
@@ -157,18 +157,16 @@ function reachState() {
 }
 
 /**
- * Keep the address list honest while the phone-facing listener is up.
+ * Keep the tunnel hostname honest while the phone-facing listener is up.
  *
- * Both readings go stale on their own schedule and neither announces it: the
- * tailnet address appears when Tailscale connects, and the tunnel hostname
- * changes when cloudflared reconnects. Polled here so that whatever the phone is
- * handed was true within the last half minute, rather than at the moment sharing
- * was switched on.
+ * It changes when cloudflared reconnects and nothing announces that, so it is
+ * re-read on a timer: whatever the phone is handed was true within the last half
+ * minute rather than at the moment sharing was switched on. The tailnet address
+ * needs no equivalent — it is read from the interface list on each request.
  */
 const REACH_POLL_MS = 30_000;
 
 function pollReach() {
-  void refreshTailscale();
   void refreshTunnel();
 }
 

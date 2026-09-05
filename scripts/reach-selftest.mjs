@@ -10,8 +10,8 @@
 import { readFileSync } from 'node:fs';
 
 import { orderOrigins } from '../server.js';
-import { addressKind } from '../src/lan.js';
-import { isTailnetAddress } from '../src/tailscale.js';
+import { addressKind, lanAddresses } from '../src/lan.js';
+import { isTailnetAddress, tailscaleState } from '../src/tailscale.js';
 
 const check = (name, got, want) => {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -36,6 +36,24 @@ pass &= check('a LAN address is not tailnet', isTailnetAddress('192.168.1.54'), 
 pass &= check('kind: tailnet', addressKind('100.67.248.30'), 'tailnet');
 pass &= check('kind: self-assigned', addressKind('169.254.246.122'), 'self-assigned');
 pass &= check('kind: lan', addressKind('192.168.1.54'), 'lan');
+
+/*
+ * The state read on this machine, whichever machine it is.
+ *
+ * The regression under this one: Tailscale's own status was read by running
+ * `tailscale status --json`, which fails outside a terminal session and prints
+ * its failure on stdout with exit status 0. The app reported "installed but not
+ * connected" while the Tailscale menu bar item said Connected. Both sides now
+ * read the same interface list, so they cannot disagree.
+ */
+const live = tailscaleState();
+pass &= check(
+  'the tailnet address agrees with the interface list',
+  live.running,
+  lanAddresses().some((a) => a.kind === 'tailnet'),
+);
+pass &= check('an address means running', live.running, Boolean(live.address));
+pass &= check('an address means installed', live.address ? live.installed : true, true);
 
 // ----------------------------------------------------------- origin ordering
 

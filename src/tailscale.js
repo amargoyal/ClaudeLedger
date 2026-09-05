@@ -15,18 +15,32 @@
  * path for that reason, and the tunnel stays on as the fallback for a phone with
  * no Tailscale on it.
  *
- * Nothing here starts or configures Tailscale. It reads what is already running
- * and reports it, including "installed but switched off", because that is a
- * thing the pairing window should be able to say out loud rather than leaving as
- * an unexplained absence.
+ * Nothing here starts or configures Tailscale, and nothing here runs it either.
+ * The obvious implementation — shell out to `tailscale status --json` — does not
+ * work from inside a GUI app. On the App Store build both binaries in
+ * `Tailscale.app/Contents/MacOS/` are front ends that hand the request to the
+ * running GUI, and outside a terminal session that hand-off fails with
+ *
+ *     The Tailscale GUI failed to start: ... (Tailscale.CLIError error 3.)
+ *
+ * printed on *stdout*, with exit status 0. Nothing about that reads as an error
+ * to a caller, so a working tailnet was reported as "installed but not
+ * connected" — the app said Tailscale was off while Tailscale said it was on.
+ *
+ * So the address is read where it is already true: the interface list. If
+ * `100.x.y.z` is bound to a `utun`, the tunnel is up, which is the only thing
+ * being asked. No subprocess, no environment to get wrong, and no timeout.
  */
 
-import { execFile } from 'node:child_process';
-import { accessSync, constants } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
 
-/** The GUI app bundle, the Homebrew CLI, and the standalone installer. */
-const BINARIES = [
-  '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
+/**
+ * Where Tailscale installs. The GUI bundle is a directory, so this is presence
+ * on disk rather than an executable check.
+ */
+const INSTALL_PATHS = [
+  '/Applications/Tailscale.app',
   '/usr/local/bin/tailscale',
   '/opt/homebrew/bin/tailscale',
   'C:\\Program Files\\Tailscale\\tailscale.exe',
@@ -35,9 +49,9 @@ const BINARIES = [
 /**
  * 100.64.0.0/10 — the carrier-grade NAT block Tailscale hands out.
  *
- * Worth recognising by shape as well as by asking the CLI: the address turns up
- * in the interface list too, and there it has to be told apart from an ordinary
- * private address that only answers on this Wi-Fi.
+ * This is the whole detector. An address in that range on a live interface is a
+ * tailnet address; there is nothing else it could be on a machine that is not
+ * itself a carrier.
  */
 export function isTailnetAddress(address) {
   const parts = String(address ?? '').split('.');
@@ -46,92 +60,25 @@ export function isTailnetAddress(address) {
   return a === 100 && b >= 64 && b <= 127;
 }
 
-/** How long a status reading is treated as current. */
-const TTL_MS = 30_000;
-
-/** `tailscale status --json` forks a process; it is not for a hot path. */
-let cached = { installed: false, running: false, address: null, dnsName: null, error: null };
-let checkedAt = 0;
-/** @type {Promise<typeof cached>|null} */
-let inFlight = null;
-
-export function tailscaleBinary() {
-  for (const path of BINARIES) {
-    try {
-      accessSync(path, constants.X_OK);
-      return path;
-    } catch {
-      /* next candidate */
-    }
-  }
-  return null;
-}
-
-/** The last reading, without waiting. Callers on a request path want this one. */
-export function tailscaleState() {
-  return { ...cached, checkedAt: checkedAt || null };
-}
-
-/** Re-read unless the last reading is still inside its TTL. */
-export function refreshIfStale({ ttl = TTL_MS } = {}) {
-  if (Date.now() - checkedAt < ttl) return Promise.resolve(tailscaleState());
-  return refreshTailscale();
+/** True when Tailscale is on this machine at all, connected or not. */
+export function tailscaleInstalled() {
+  return INSTALL_PATHS.some((path) => existsSync(path));
 }
 
 /**
- * Ask Tailscale where this Mac is, and remember the answer.
+ * This Mac's tailnet address, or the reason there isn't one.
  *
- * Never rejects: an absent binary, a hung daemon and unparseable output are all
- * the same answer to the only question being asked, which is whether there is a
- * tailnet address to hand the phone right now.
+ * Cheap enough to call per request: one `getifaddrs`, no cache to go stale.
+ * `installed` is what separates "turn Tailscale on" from "go install it", which
+ * are different enough instructions to be worth telling apart.
  */
-export function refreshTailscale({ timeout = 4000 } = {}) {
-  if (inFlight) return inFlight;
-
-  const binary = tailscaleBinary();
-  if (!binary) {
-    cached = { installed: false, running: false, address: null, dnsName: null, error: null };
-    checkedAt = Date.now();
-    return Promise.resolve(tailscaleState());
+export function tailscaleState() {
+  let address = null;
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family !== 'IPv4' || a.internal) continue;
+      if (isTailnetAddress(a.address)) address ??= a.address;
+    }
   }
-
-  inFlight = new Promise((resolve) => {
-    execFile(binary, ['status', '--json'], { timeout, maxBuffer: 8 << 20 }, (err, stdout) => {
-      cached = { ...parseStatus(stdout), installed: true };
-      // A non-zero exit is normal when the daemon is stopped or logged out, and
-      // it still prints a usable BackendState — so the output is parsed first
-      // and the error only fills in when there was nothing to parse.
-      if (err && !cached.running && !cached.address) {
-        cached.error = err.killed ? 'Tailscale did not answer in time.' : null;
-      }
-      checkedAt = Date.now();
-      inFlight = null;
-      resolve(tailscaleState());
-    });
-  });
-
-  return inFlight;
-}
-
-function parseStatus(stdout) {
-  const blank = { installed: true, running: false, address: null, dnsName: null, error: null };
-  let root;
-  try {
-    root = JSON.parse(String(stdout ?? ''));
-  } catch {
-    return blank;
-  }
-  if (!root || typeof root !== 'object') return blank;
-
-  const running = root.BackendState === 'Running';
-  const self = root.Self ?? {};
-  const ips = Array.isArray(self.TailscaleIPs) ? self.TailscaleIPs : [];
-  // IPv4 only. The phone builds `http://<address>:<port>` out of this, and the
-  // v6 form would need brackets it does not add — a v4 address is always issued
-  // alongside, so there is nothing to gain by handling both.
-  const address = running ? (ips.find((ip) => isTailnetAddress(ip)) ?? null) : null;
-  // MagicDNS names arrive fully qualified with a trailing dot.
-  const dnsName = running ? (String(self.DNSName ?? '').replace(/\.$/, '') || null) : null;
-
-  return { installed: true, running, address, dnsName, error: null };
+  return { installed: address ? true : tailscaleInstalled(), running: Boolean(address), address };
 }

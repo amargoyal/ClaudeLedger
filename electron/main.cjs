@@ -499,7 +499,7 @@ function pairState() {
     relay: tunnelModule ? tunnelModule.tunnelState() : { installed: false, running: false, origin: null },
     tailscale: tailscaleModule
       ? tailscaleModule.tailscaleState()
-      : { installed: false, running: false, address: null, dnsName: null },
+      : { installed: false, running: false, address: null },
     error: lanError,
   };
 }
@@ -834,15 +834,7 @@ async function createTray() {
 function registerIpc() {
   ipcMain.on('ledger:set-theme', (_event, theme) => setTheme(theme));
 
-  ipcMain.handle('pair:state', async () => {
-    // The window polls this. Refreshing here rather than on a timer of its own
-    // means the Tailscale row is current whenever someone is looking at it, and
-    // costs nothing when nobody is — and unlike the phone-facing listener's own
-    // poll, it also runs while sharing is off, which is when "Tailscale is
-    // running, turn sharing on" is the thing that needs saying.
-    await tailscaleModule?.refreshIfStale({ ttl: 5000 });
-    return pairState();
-  });
+  ipcMain.handle('pair:state', () => pairState());
   ipcMain.handle('pair:set-sharing', (_event, on) => setSharing(on));
   ipcMain.handle('pair:set-relay', (_event, on) => setRelay(Boolean(on)));
   ipcMain.handle('pair:new-code', () => {
