@@ -8,7 +8,8 @@ import { readConnection } from './src/credentials.js';
 import { METRIC_IDS, buildSnapshot, metricSeries, usageCurve } from './src/aggregate.js';
 import { query as queryHistory, span as historySpan } from './src/history.js';
 import { fingerprint, loadEvents } from './src/transcripts.js';
-import { tunnelState } from './src/tunnel.js';
+import { refreshTunnel, tunnelState } from './src/tunnel.js';
+import { tailscaleState } from './src/tailscale.js';
 import {
   lanAddresses,
   listDevices,
@@ -95,29 +96,78 @@ async function serveStatic(res, pathname, dir, indexFile = 'index.html') {
  * time it starts, so a phone holding one string is a phone that works until the
  * Mac is restarted once.
  *
- * The tunnel goes first because it is the only entry that answers from anywhere.
- * The LAN addresses follow, since they answer fastest where they answer at all.
- * Every response the phone can reach carries this, so the list is re-learned
+ * The order is by reach first and speed second:
+ *
+ *   1. the tailnet address, which answers from anywhere the phone has Tailscale
+ *      and — the part that matters — is the same string tomorrow. It takes the
+ *      direct route on the same Wi-Fi, so being first costs nothing at home;
+ *   2. the LAN addresses, which answer only at home but answer fastest there,
+ *      and cover a phone with no Tailscale on this Wi-Fi;
+ *   3. the Cloudflare tunnel, a round trip through Cloudflare's edge, and the
+ *      one entry that needs nothing installed on the phone at all.
+ *
+ * Every response the phone can reach carries this list, so it is re-learned
  * rather than remembered — come home, connect over Wi-Fi, and today's tunnel
- * address arrives with the next snapshot.
+ * address arrives with the next snapshot. That re-learning is exactly what a
+ * phone on cellular cannot do, which is why entry 1 exists.
  */
 /** The port the phone-facing listener is on, or null while it is off. */
 let lanPort = null;
 
-function reachableOrigins(port) {
+export function orderOrigins({ port, tailnet, addresses = [], tunnel }) {
   const origins = [];
-  const tunnel = tunnelState();
-  if (tunnel.running && tunnel.origin) origins.push(tunnel.origin);
   if (port) {
-    for (const { address } of lanAddresses()) {
-      // 169.254/16 is what an interface gives itself when no DHCP answered. It
-      // is never an address another device can reach, and on the phone it costs
-      // a timeout on the way to one that works.
-      if (address.startsWith('169.254.')) continue;
+    if (tailnet?.running && tailnet.address) origins.push(`http://${tailnet.address}:${port}`);
+    for (const { address, kind } of addresses) {
+      // `self-assigned` is 169.254/16, what an interface gives itself when no
+      // DHCP answered: never reachable by anything, and on the phone it costs a
+      // timeout on the way to an address that works. `tailnet` is already above,
+      // where it is labelled rather than mistaken for a local address.
+      if (kind !== 'lan') continue;
       origins.push(`http://${address}:${port}`);
     }
   }
-  return origins;
+  if (tunnel?.running && tunnel.origin) origins.push(tunnel.origin);
+  return [...new Set(origins)];
+}
+
+function reachableOrigins(port) {
+  return orderOrigins({
+    port,
+    tailnet: tailscaleState(),
+    addresses: lanAddresses(),
+    tunnel: tunnelState(),
+  });
+}
+
+/**
+ * How this Mac can currently be reached, for a client that wants to say so.
+ *
+ * The phone can work most of this out from the address that answered, but not
+ * the difference between "Tailscale is off on the Mac" and "you never installed
+ * it" — and that is the difference between two very different next steps.
+ */
+function reachState() {
+  const tailnet = tailscaleState();
+  const tunnel = tunnelState();
+  return {
+    tailscale: { installed: tailnet.installed, running: tailnet.running, address: tailnet.address },
+    relay: { installed: tunnel.installed, running: tunnel.running, origin: tunnel.origin },
+  };
+}
+
+/**
+ * Keep the tunnel hostname honest while the phone-facing listener is up.
+ *
+ * It changes when cloudflared reconnects and nothing announces that, so it is
+ * re-read on a timer: whatever the phone is handed was true within the last half
+ * minute rather than at the moment sharing was switched on. The tailnet address
+ * needs no equivalent — it is read from the interface list on each request.
+ */
+const REACH_POLL_MS = 30_000;
+
+function pollReach() {
+  void refreshTunnel();
 }
 
 async function handleSnapshot(url, res) {
@@ -137,6 +187,7 @@ async function handleSnapshot(url, res) {
     account,
     app: { version: APP_VERSION },
     origins: reachableOrigins(lanPort),
+    reach: reachState(),
   });
 }
 
@@ -220,6 +271,7 @@ export function createApp({ mode = 'local' } = {}) {
           version: APP_VERSION,
           pairing: pairingState().active,
           origins: reachableOrigins(lanPort),
+          reach: reachState(),
         });
         return;
       }
@@ -379,15 +431,21 @@ export function startLanServer({ port = Number(process.env.LEDGER_LAN_PORT ?? 43
   const server = createApp({ mode: 'lan' });
   const flush = setInterval(() => persistLastSeen(), 60_000);
   flush.unref?.();
+  const reach = setInterval(pollReach, REACH_POLL_MS);
+  reach.unref?.();
 
   return new Promise((resolve, reject) => {
     server.once('error', (err) => {
       clearInterval(flush);
+      clearInterval(reach);
       reject(err);
     });
     server.listen(port, '0.0.0.0', () => {
       const addr = server.address();
       lanPort = typeof addr === 'object' && addr ? addr.port : port;
+      // The first phone to ask may ask a second later, and an unasked tailnet
+      // address is an address the phone is not told about.
+      pollReach();
       resolve({
         server,
         port: lanPort,
@@ -395,6 +453,7 @@ export function startLanServer({ port = Number(process.env.LEDGER_LAN_PORT ?? 43
         stop: () =>
           new Promise((done) => {
             clearInterval(flush);
+            clearInterval(reach);
             lanPort = null;
             persistLastSeen();
             server.close(() => done());

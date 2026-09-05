@@ -2,9 +2,10 @@
  * Post-process the generated iOS project.
  *
  * `npx cap add ios` scaffolds a stock Capacitor app, and a stock Capacitor app
- * cannot do the one thing this one exists to do: reach a plain-HTTP server on the
- * local network. Three separate iOS mechanisms have to be satisfied, and missing
- * any of them fails silently at runtime rather than at build time —
+ * cannot do the one thing this one exists to do: reach a plain-HTTP server on a
+ * Mac, on this Wi-Fi or across a tailnet. Three separate iOS mechanisms have to
+ * be satisfied, and missing any of them fails silently at runtime rather than at
+ * build time —
  *
  *   - App Transport Security blocks cleartext HTTP outright;
  *   - iOS 14+ additionally requires the local-network privacy permission, which
@@ -71,10 +72,27 @@ function ensureContainer(path, type) {
 
 set(':CFBundleDisplayName', 'string', 'Ledger');
 
-// A phone can only talk to the Mac over plain HTTP on a private address. This
-// exception covers exactly that and nothing else — it is not NSAllowsArbitraryLoads.
+/*
+ * The phone talks to the Mac over plain HTTP, and to two kinds of address.
+ *
+ * `NSAllowsLocalNetworking` covers the LAN one — 192.168/16 and the rest of the
+ * private ranges. It does not cover a tailnet address: Tailscale assigns out of
+ * 100.64.0.0/10, which is carrier-grade NAT space and not "local" as far as App
+ * Transport Security is concerned, so the request is refused before it is made.
+ * That failure is silent and looks exactly like the Mac being asleep, which is
+ * the failure the tailnet path exists to end.
+ *
+ * There is no narrower exception that fits. `NSExceptionDomains` takes names, and
+ * the tailnet address is a bare IP that differs per machine, so pinning one would
+ * be pinning this developer's Mac into the build. Hence arbitrary loads, with the
+ * tradeoff stated rather than buried: cleartext is allowed to any host, and what
+ * defends the connection is that the phone only ever talks to an address this Mac
+ * handed it, over a bearer token, and that the tailnet leg is WireGuard-encrypted
+ * end to end regardless of what ATS thinks of it.
+ */
 ensureContainer(':NSAppTransportSecurity', 'dict');
 set(':NSAppTransportSecurity:NSAllowsLocalNetworking', 'bool', 'true');
+set(':NSAppTransportSecurity:NSAllowsArbitraryLoads', 'bool', 'true');
 
 set(
   ':NSLocalNetworkUsageDescription',

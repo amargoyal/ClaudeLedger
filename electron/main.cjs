@@ -211,6 +211,8 @@ let lanError = null;
 let lanModule = null;
 /** Loaded with the rest; only spawns anything when the relay switch is used. */
 let tunnelModule = null;
+/** Reads a tailnet address if Tailscale is running. Starts nothing. */
+let tailscaleModule = null;
 /** Only for its duration formatter; the projections themselves arrive with the account. */
 let burnModule = null;
 let anthropic = null;
@@ -495,11 +497,14 @@ function pairState() {
     pairing: lanModule ? lanModule.pairingState() : { active: false },
     devices: lanModule ? lanModule.listDevices() : [],
     relay: tunnelModule ? tunnelModule.tunnelState() : { installed: false, running: false, origin: null },
+    tailscale: tailscaleModule
+      ? tailscaleModule.tailscaleState()
+      : { installed: false, running: false, address: null },
     error: lanError,
   };
 }
 
-async function setSharing(on) {
+async function setSharing(on, { remember = true } = {}) {
   lanError = null;
   if (on && !lan) {
     try {
@@ -519,6 +524,9 @@ async function setSharing(on) {
     await lan.stop();
     lan = null;
   }
+  // Only a deliberate flip is remembered. A failed start is not a preference,
+  // and neither is the restore below turning its own answer back into a setting.
+  if (remember && !lanError) writeSettings({ sharing: Boolean(on) });
   return pairState();
 }
 
@@ -531,16 +539,43 @@ async function setSharing(on) {
  * and publishes it, which is why it is off until asked for and why the pairing
  * window says what it does.
  */
-async function setRelay(on) {
+async function setRelay(on, { remember = true } = {}) {
   if (!tunnelModule) return pairState();
   if (on) {
     // Nothing to tunnel to until the listener exists.
-    if (!lan) await setSharing(true);
+    if (!lan) await setSharing(true, { remember });
     if (lan) await tunnelModule.startTunnel({ port: lan.port });
   } else {
     tunnelModule.stopTunnel();
   }
+  if (remember) writeSettings({ relay: Boolean(on) });
   return pairState();
+}
+
+/**
+ * Put the switches back where they were left.
+ *
+ * Sharing used to start off on every launch, and that is the difference between
+ * an app you can check from a train and an app you can check from a train until
+ * your Mac reboots. The phone cannot ask this Mac to start listening — that is
+ * what it needs the listener for — so if the switch does not come back on its
+ * own, nobody is there to turn it on until you are sitting in front of it.
+ *
+ * It comes back only where it was already earned: the setting is written by a
+ * deliberate flip, and sharing is only restored for a Mac that has a phone
+ * paired to it. A fresh install still starts silent.
+ */
+async function restoreSharing() {
+  const settings = readSettings();
+  if (settings.sharing !== true) return;
+  if (!lanModule?.listDevices().length) return;
+
+  await setSharing(true, { remember: false });
+  if (!lan) {
+    console.error('could not restore phone sharing:', lanError);
+    return;
+  }
+  if (settings.relay === true) await setRelay(true, { remember: false });
 }
 
 async function stopSharing() {
@@ -895,6 +930,7 @@ app.whenReady().then(async () => {
     serverModule = await importLocal('server.js');
     lanModule = await importLocal('src/lan.js');
     tunnelModule = await importLocal('src/tunnel.js');
+    tailscaleModule = await importLocal('src/tailscale.js');
     burnModule = await importLocal('src/burn.js');
     // Port 0 = let the OS pick a free port, bound to loopback only.
     serverInfo = await serverModule.startServer({ port: 0, host: '127.0.0.1' });
@@ -917,6 +953,11 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error('menu bar item unavailable:', err);
   }
+
+  // After the window, and not awaited: bringing a tunnel back up takes seconds,
+  // and none of it is worth a blank screen. The tray menu is built fresh on each
+  // right-click, so it picks the new state up on its own.
+  void restoreSharing();
 
   app.on('activate', () => openWindow());
 });

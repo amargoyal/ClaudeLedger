@@ -40,15 +40,45 @@ function activeHost() {
 /**
  * The address to hand the phone, best first.
  *
- * The tunnel wins whenever it is up: it is the only one of the two that answers
- * from cellular, and a phone paired on it keeps working when it leaves the
- * house. The LAN address is what remains otherwise.
+ * The tunnel wins whenever it is up. This is the one address a scan can carry,
+ * and the phone that scans it may be a browser on an https page, which cannot
+ * open a plain http address at all. The tailnet address comes next — it is the
+ * one that still answers next month — and the LAN address is what remains.
+ *
+ * The phone is handed the full list the moment it pairs, so this choice only has
+ * to survive the first request.
  */
 function pairOrigin() {
   const relay = state?.relay;
   if (relay?.running && relay.origin) return relay.origin;
+  const tailnet = state?.tailscale;
+  if (tailnet?.running && tailnet.address && state?.port) {
+    return `http://${tailnet.address}:${state.port}`;
+  }
   const host = activeHost();
   return host ? `http://${host}` : null;
+}
+
+/**
+ * Tailscale, reported and not controlled.
+ *
+ * This app does not start Tailscale and should not pretend it could — the row
+ * is here because a tailnet address is the only way back to this Mac that
+ * survives a reboot, and its absence is otherwise invisible.
+ */
+function renderTailscale() {
+  const ts = state?.tailscale ?? {};
+  const pill = $('tailscale-status');
+  const on = Boolean(ts.running && ts.address);
+
+  pill.textContent = on ? 'On' : ts.installed ? 'Off' : 'Not installed';
+  pill.classList.toggle('is-on', on);
+
+  $('tailscale-sub').textContent = on
+    ? `This Mac answers at ${ts.address} from anywhere your phone has Tailscale on.`
+    : ts.installed
+      ? 'Installed but not connected. Turn Tailscale on to reach this Mac from cellular.'
+      : 'Not installed. Install it here and on your phone for an address that answers from anywhere and never changes.';
 }
 
 function renderRelay() {
@@ -63,7 +93,7 @@ function renderRelay() {
       ? relay.origin
         ? `On — reachable at ${relay.origin.replace('https://', '')}`
         : 'Starting…'
-      : 'Off — the phone has to be on this Wi‑Fi.';
+      : 'Off — for a phone with no Tailscale. The address changes on every start.';
 
   const err = $('relay-error');
   if (relay.error) {
@@ -109,7 +139,12 @@ function renderAddresses() {
     select.dataset.signature = signature;
     clear(select);
     for (const a of addresses) {
-      const option = el('option', null, `${a.address}  (${a.iface})`);
+      // The interface name is the honest label for an ordinary address and a
+      // useless one for a tailnet address, which arrives on a `utun` that looks
+      // like any other VPN's.
+      const label =
+        a.kind === 'tailnet' ? 'Tailscale' : a.kind === 'self-assigned' ? `${a.iface}, no network` : a.iface;
+      const option = el('option', null, `${a.address}  (${label})`);
       option.value = a.address;
       select.append(option);
     }
@@ -209,6 +244,7 @@ function renderDevices() {
 
 function render() {
   renderShare();
+  renderTailscale();
   renderRelay();
   renderAddresses();
   renderCode();

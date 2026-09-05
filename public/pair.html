@@ -31,7 +31,15 @@
 
       <div class="toggle-row">
         <div>
-          <div class="toggle-label">Reach this Mac from anywhere</div>
+          <div class="toggle-label">Tailscale</div>
+          <div class="toggle-sub" id="tailscale-sub">Checking…</div>
+        </div>
+        <div class="status" id="tailscale-status">—</div>
+      </div>
+
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">Cloudflare relay</div>
           <div class="toggle-sub" id="relay-sub">
             Off — the phone has to be on this Wi‑Fi.
           </div>
@@ -79,8 +87,10 @@
     </section>
 
     <footer class="foot">
-      Sharing stops when you quit Claude Ledger. A paired phone can read your usage figures for as
-      long as it stays paired — remove it here to cut it off.
+      Sharing stops when you quit Claude Ledger, and starts again with it once a phone is paired —
+      otherwise a Mac that reboots while you are out is a Mac you cannot reach until you get home.
+      A paired phone can read your usage figures for as long as it stays paired — remove it here to
+      cut it off.
     </footer>
 
     <script type="module" src="./pair.js"></script>
