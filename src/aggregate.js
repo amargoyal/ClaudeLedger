@@ -1043,6 +1043,16 @@ export function metricSeries({ assistant, prompts, meta }, { metric: id, range =
   const stamps = values.map((_, i) => from + i * step);
   const total = values.reduce((a, b) => a + b, 0);
 
+  /*
+   * Everything this metric had already counted before the window opens.
+   *
+   * The phone's cumulative chart draws a line that never falls, on any range —
+   * so on a five-hour window it has to start from the all-time figure at 5pm
+   * rather than from zero, or the "cumulative" total silently means something
+   * different on every range. One pass over rows already in memory.
+   */
+  const priorTotal = rows.reduce((sum, r) => (r.ts < from ? sum + metric.of(r) : sum), 0);
+
   // Same-length window one period back, on the same rule the stat chips use:
   // only compared when history actually covers it.
   const shift = rangeShiftMs(activeRange);
@@ -1126,6 +1136,7 @@ export function metricSeries({ assistant, prompts, meta }, { metric: id, range =
     stamps,
     total,
     totalText: fmtMetric(total, metric.format),
+    priorTotal,
     delta,
     stats,
   };
