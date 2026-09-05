@@ -19,6 +19,8 @@ import { homedir, networkInterfaces } from 'node:os';
 import { randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { dirname, join } from 'node:path';
 
+import { isTailnetAddress } from './tailscale.js';
+
 const DEVICES_FILE =
   process.env.CLAUDE_LEDGER_DEVICES_FILE ?? join(homedir(), '.claude-ledger', 'devices.json');
 
@@ -175,11 +177,35 @@ export function persistLastSeen() {
 // -------------------------------------------------------------------- addresses
 
 /**
+ * What an address is good for, which is not the same as what interface it is on.
+ *
+ * The distinction the rest of the app cares about is how far an address reaches:
+ *
+ *   - `tailnet`      — answers from anywhere the phone has Tailscale, and keeps
+ *                      the same value across reboots. Arrives on a `utun`
+ *                      interface, indistinguishable by name from a VPN's.
+ *   - `self-assigned` — 169.254/16, what an interface gives itself when no DHCP
+ *                      answered. Never reachable by anything, and on the phone
+ *                      it costs a timeout on the way to an address that works.
+ *   - `lan`          — a real address on a real network, and nothing outside it.
+ */
+export function addressKind(address) {
+  if (isTailnetAddress(address)) return 'tailnet';
+  if (String(address ?? '').startsWith('169.254.')) return 'self-assigned';
+  return 'lan';
+}
+
+/**
  * Reachable IPv4 addresses for this Mac, best candidate first.
  *
  * Wi-Fi (`en0`) is what a phone will actually be on, so it is ranked above
  * Thunderbolt bridges and virtual adapters, which are usually unreachable and
  * used to be offered first purely because of interface enumeration order.
+ *
+ * A tailnet address sorts with the virtual adapters on purpose. This order is
+ * what the pairing window's address picker offers, and a phone standing next to
+ * the Mac is being handed an address to scan, not to survive a trip on — the
+ * reach ordering that matters when it leaves lives in `reachableOrigins`.
  */
 export function lanAddresses() {
   const rank = (name) => {
@@ -193,7 +219,7 @@ export function lanAddresses() {
   for (const [name, addrs] of Object.entries(networkInterfaces())) {
     for (const a of addrs ?? []) {
       if (a.family !== 'IPv4' || a.internal) continue;
-      out.push({ iface: name, address: a.address });
+      out.push({ iface: name, address: a.address, kind: addressKind(a.address) });
     }
   }
   return out.sort((a, b) => rank(a.iface) - rank(b.iface) || a.address.localeCompare(b.address));

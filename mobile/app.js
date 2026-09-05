@@ -252,7 +252,7 @@ async function request(path, { base, token, method = 'GET', body, timeout = 20_0
     }
     // fetch() reports every network-layer failure as the same opaque TypeError,
     // so this is as specific as the message can honestly get.
-    throw new ApiError('Can’t reach your Mac. Check it’s awake and on the same Wi‑Fi.', {
+    throw new ApiError('Can’t reach your Mac. Check it’s awake and still sharing.', {
       code: 'offline',
     });
   } finally {
@@ -272,6 +272,36 @@ function candidateOrigins() {
   }
   return out;
 }
+
+/**
+ * How far an address reaches, read off the address itself.
+ *
+ * `tailnet` and `relay` answer from anywhere; `lan` answers at home and nowhere
+ * else. The phone needs this to answer the one question it cannot otherwise
+ * answer while it is failing — whether it is out of range or whether the Mac
+ * never had a way to be reached from out here in the first place.
+ */
+function originReach(origin) {
+  const clean = normalizeBase(origin);
+  if (!clean) return null;
+  if (clean.includes('.trycloudflare.com')) return 'relay';
+  const host = clean.replace(/^https?:\/\//, '').split(':')[0];
+  const octets = host.split('.').map((n) => Number.parseInt(n, 10));
+  // 100.64.0.0/10, the carrier-grade NAT block Tailscale assigns from.
+  if (octets.length === 4 && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127) return 'tailnet';
+  return 'lan';
+}
+
+/** True when at least one known address answers from off this Wi-Fi. */
+function hasRemoteOrigin() {
+  return candidateOrigins().some((origin) => originReach(origin) !== 'lan');
+}
+
+const REACH_LABELS = {
+  tailnet: 'Tailscale — answers anywhere',
+  relay: 'Cloudflare relay — answers anywhere',
+  lan: 'This Wi‑Fi only',
+};
 
 /**
  * Remember where this Mac can be reached, and which of those worked last.
@@ -1517,10 +1547,13 @@ function renderYou(view) {
   const dl2 = el('dl');
   dl2.style.margin = '0';
   dl2.append(kv('Address', state.conn?.baseUrl ?? 'not paired'));
-  // The count, not the list: the addresses are the app's business, and the one
-  // thing worth knowing is whether there is a way home other than this Wi-Fi.
+  // Not the list — the addresses are the app's business. Only the two things
+  // that are the user's: whether the address in use survives leaving the house,
+  // and whether anything else known would.
+  const reach = originReach(state.conn?.baseUrl);
+  if (reach) dl2.append(kv('Path', REACH_LABELS[reach]));
   const spare = candidateOrigins().length - 1;
-  if (spare > 0) dl2.append(kv('Also reachable at', plural(spare, 'address')));
+  if (spare > 0) dl2.append(kv('Also known', plural(spare, 'address')));
   dl2.append(kv('Paired', state.conn?.pairedAt ? ago(state.conn.pairedAt) : '—'));
   dl2.append(kv('Last sync', state.cachedAt ? ago(state.cachedAt) : '—'));
   if (snap?.meta) {
@@ -2026,7 +2059,18 @@ function renderChrome() {
   } else if (state.offline) {
     banner.hidden = false;
     banner.className = 'banner';
-    banner.append(el('span', null, `Showing cached figures from ${clock(state.cachedAt)}.`));
+    // Which of the two this is decides what the user should do about it, and
+    // only one of them is worth getting off the sofa for. A Mac with nothing but
+    // LAN addresses was never going to answer from here, however long you wait.
+    banner.append(
+      el(
+        'span',
+        null,
+        hasRemoteOrigin()
+          ? `Showing cached figures from ${clock(state.cachedAt)}.`
+          : `Cached figures from ${clock(state.cachedAt)}. This Mac has no address that answers off its own Wi‑Fi — turn on Tailscale or the relay in Pair a Phone.`,
+      ),
+    );
     const retry = el('button', null, 'Retry');
     retry.type = 'button';
     retry.addEventListener('click', () => refresh());

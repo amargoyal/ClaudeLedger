@@ -1,5 +1,5 @@
 /*
- * The path that answers when the phone is not on this Wi-Fi.
+ * The path that answers when the phone has no Tailscale.
  *
  * A LAN address is only an address at home: the same phone on cellular gets a
  * page that never loads, which is indistinguishable from the Mac being off. A
@@ -14,10 +14,17 @@
  * The tunnel points at the loopback side of the phone-facing listener, so it
  * inherits that listener's authentication rather than the desktop one's absence
  * of it.
+ *
+ * Two things make it a fallback rather than the primary path, and both are about
+ * the hostname being disposable. It is new on every start, so a phone that is
+ * away from home when this Mac restarts cannot be told the new one. And it can
+ * change again underneath a running tunnel when cloudflared reconnects. See
+ * `src/tailscale.js` for the address that has neither property.
  */
 
 import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
+import { createServer } from 'node:net';
 
 /** Where Homebrew and the official installer put it. */
 const BINARIES = ['/opt/homebrew/bin/cloudflared', '/usr/local/bin/cloudflared'];
@@ -29,6 +36,25 @@ let child = null;
 let origin = null;
 let error = null;
 let startedAt = null;
+/**
+ * Whether the switch is on, as opposed to whether a process happens to be alive.
+ *
+ * A tunnel that dies stays dead otherwise, and nothing says so: the switch still
+ * reads on, and the only symptom is that the phone stops answering to anything
+ * but the LAN. `refreshTunnel` uses this to tell "the user turned it off" apart
+ * from "it fell over".
+ */
+let wanted = false;
+let wantedPort = null;
+/**
+ * cloudflared's own metrics server, pinned rather than left to the random port
+ * it picks otherwise. `/quicktunnel` on it reports the hostname the tunnel is
+ * actually serving, which is the only authoritative answer — see
+ * `liveHostname()`.
+ */
+let metricsPort = null;
+/** Whether the cloudflared on `metricsPort` is the one this app started. */
+let metricsOwned = false;
 
 export function cloudflaredBinary() {
   for (const path of BINARIES) {
@@ -46,6 +72,7 @@ export function tunnelState() {
   return {
     installed: Boolean(cloudflaredBinary()),
     running: Boolean(child),
+    wanted,
     origin,
     error,
     startedAt,
@@ -60,22 +87,35 @@ export function tunnelState() {
  * takes a second or two to register the tunnel; a QR built before that would
  * encode `null`.
  */
-export function startTunnel({ port, timeout = 60_000 } = {}) {
-  if (child) return Promise.resolve(tunnelState());
+export async function startTunnel({ port, timeout = 60_000 } = {}) {
+  wanted = true;
+  wantedPort = port ?? wantedPort;
+  if (child) return tunnelState();
 
   const binary = cloudflaredBinary();
   if (!binary) {
     error = 'cloudflared is not installed. Run `brew install cloudflared` and try again.';
-    return Promise.resolve(tunnelState());
+    return tunnelState();
   }
 
   error = null;
   origin = null;
 
+  // Whoever is already on that port is not ours, and the hostname it would
+  // report is not ours either — most likely an orphaned cloudflared from an app
+  // that was killed rather than quit. cloudflared is left to pick its own port
+  // in that case and the banner is the only source, which is what this was
+  // before: nothing is lost but the certainty.
+  metricsPort = wantedPort + 2;
+  metricsOwned = await portIsFree(metricsPort);
+  // Awaiting let a second call in. The first one owns the process.
+  if (child) return tunnelState();
+
   return new Promise((resolve) => {
-    const proc = spawn(binary, ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${port}`], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const args = ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${wantedPort}`];
+    if (metricsOwned) args.push('--metrics', `127.0.0.1:${metricsPort}`);
+
+    const proc = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     child = proc;
     startedAt = Date.now();
 
@@ -117,12 +157,17 @@ export function startTunnel({ port, timeout = 60_000 } = {}) {
     proc.on('exit', (code, signal) => {
       // Only a surprise exit is a failure worth reporting: `stopTunnel` clears
       // `child` before it kills, so a deliberate stop lands here with nothing
-      // left to say.
+      // left to say. A surprise exit while the switch is still on is picked back
+      // up by `refreshTunnel`, which is on a timer and so restarts at a sane
+      // rate rather than spinning on a binary that cannot run.
       if (child !== proc) return;
       child = null;
       origin = null;
       startedAt = null;
-      if (!settled) {
+      metricsOwned = false;
+      if (wanted) {
+        error = `cloudflared exited (${signal ?? code}). Retrying.`;
+      } else if (!settled) {
         error = `cloudflared exited (${signal ?? code}) before it published an address.`;
       }
       settle();
@@ -163,10 +208,83 @@ async function waitUntilAnswering(url, timer, settle) {
   settle();
 }
 
+/**
+ * Keep the switch position and the world in agreement.
+ *
+ * Called on a slow timer while sharing is on. Two things it repairs, both of
+ * which used to end with the phone being handed an address nothing answers on:
+ *
+ *   - a cloudflared that exited is started again, because the switch says the
+ *     user still wants a tunnel;
+ *   - the hostname is re-read from cloudflared rather than remembered from its
+ *     banner. Scraping a log line once makes the whole path depend on that line
+ *     arriving in one piece, and says nothing at all when the tunnel reconnects
+ *     under a new name — after which this Mac advertises a dead address for the
+ *     rest of its life while a perfectly good tunnel is up.
+ */
+export async function refreshTunnel() {
+  if (!wanted) return tunnelState();
+  if (!child) {
+    if (wantedPort) void startTunnel({ port: wantedPort });
+    return tunnelState();
+  }
+  const live = await liveHostname();
+  if (live && live !== origin) {
+    origin = live;
+    error = null;
+  }
+  return tunnelState();
+}
+
+/**
+ * The hostname cloudflared says it is serving, from its metrics server.
+ *
+ * Only asked when this app is the one that put a cloudflared on that port. A
+ * tunnel outlives its owner when the app is killed rather than quit, and the
+ * orphan keeps the metrics port — so asking without checking would read a
+ * hostname belonging to a *different* tunnel, pointing at a process that may not
+ * be serving any more, and hand it to the phone as this Mac's own.
+ */
+async function liveHostname() {
+  if (!metricsOwned || !metricsPort) return null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${metricsPort}/quicktunnel`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return null;
+    const body = await res.json();
+    const hostname = typeof body?.hostname === 'string' ? body.hostname.trim() : '';
+    if (!hostname) return null;
+    return hostname.includes('://') ? hostname.replace(/\/+$/, '') : `https://${hostname}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when nothing holds `port` on loopback right now.
+ *
+ * Answered by binding it, because that is the only answer that is not a guess.
+ * The port is released immediately and handed to cloudflared, which is a race in
+ * theory and has one contender in practice.
+ */
+function portIsFree(port) {
+  return new Promise((resolve) => {
+    const probe = createServer();
+    probe.once('error', () => resolve(false));
+    probe.listen({ host: '127.0.0.1', port, exclusive: true }, () => {
+      probe.close(() => resolve(true));
+    });
+  });
+}
+
 export function stopTunnel() {
   const proc = child;
+  wanted = false;
   child = null;
   origin = null;
   startedAt = null;
+  metricsOwned = false;
+  error = null;
   if (proc) proc.kill('SIGTERM');
 }

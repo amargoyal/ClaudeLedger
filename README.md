@@ -212,8 +212,9 @@ pull to refresh, haptics, and a dark theme that follows the system.
 ### How the phone gets the data
 
 There is no Node on a phone, no `~/.claude/projects/`, and no keychain. So the phone computes
-nothing: it pairs with your Mac over your own Wi-Fi and renders the same JSON snapshot the
-desktop window renders.
+nothing: it pairs with your Mac and renders the same JSON snapshot the desktop window renders.
+Over Wi-Fi at home, and over a tailnet or a Cloudflare tunnel from anywhere else — see
+[reaching the Mac when you are not at home](#reaching-the-mac-when-you-are-not-at-home).
 
 ```
   iPhone                                     your Mac
@@ -227,19 +228,40 @@ desktop window renders.
 
 **Your Claude token never leaves the Mac.** The phone only ever receives figures.
 
-Sharing is off until you turn it on, stops when you quit the app, and is reachable only with
-a bearer token issued during pairing. The pairing code is six digits, expires in five minutes,
-and dies after five wrong guesses.
+Sharing is off until you turn it on and is reachable only with a bearer token issued during
+pairing. The pairing code is six digits, expires in five minutes, and dies after five wrong
+guesses. It stops when you quit the app, and comes back with it once a phone is paired —
+otherwise a Mac that reboots while you are out is a Mac you cannot reach until you get home.
+
+### Reaching the Mac when you are not at home
+
+A LAN address is only an address on that LAN. From cellular it is nothing, and the phone shows
+its cache. There are two ways past that, and the phone stores every address it is told about
+rather than the one it happened to pair on, so it tries them in order until one answers.
+
+| Path | Reaches | Survives a reboot | Needs |
+| --- | --- | --- | --- |
+| **Tailscale** | anywhere | yes — the address never changes | Tailscale on the Mac and the phone, same tailnet |
+| **LAN** | this Wi-Fi | yes | nothing |
+| **Cloudflare relay** | anywhere | no — a new hostname every start | `brew install cloudflared`, then the switch in the pairing window |
+
+Tailscale is the one to have. `100.x.y.z` is the same string tomorrow, so a phone that already
+knows it keeps working through Mac reboots, Wi-Fi changes and tunnel restarts. The relay's
+hostname is new on every start, and a phone that is away from home when the Mac restarts has no
+way to be told the new one — it can only learn it from a Mac it can already reach.
+
+Neither is required. With neither, the phone works at home and shows its last snapshot elsewhere.
 
 ### Pair a phone
 
 1. On the Mac: **Claude Ledger → Pair a Phone…** (`⌘P`), or right-click the menu bar icon.
-2. Turn on **Share over Wi-Fi**. The window shows your Mac's address and a six-digit code.
+2. Turn on **Share over Wi-Fi**. The window shows your Mac's address and a six-digit code, plus
+   whether Tailscale is up and whether the relay is on.
 3. On the phone, either scan the QR with the built-in Camera app, or type the address and
    code into the app's pairing screen.
 
-Both devices need to be on the same Wi-Fi. Two permission prompts appear once, and both have
-to be allowed or the phone can't reach the Mac:
+Pair on the same Wi-Fi. Two permission prompts appear once, and both have to be allowed or the
+phone can't reach the Mac:
 
 - **macOS** asks whether to let Claude Ledger accept incoming network connections, the first
   time you turn sharing on.
@@ -604,7 +626,13 @@ On the shared listener every route above needs `Authorization: Bearer <device to
   [why some limit lines are dashed](#why-some-limit-lines-are-dashed).
 - The desktop dashboard loads fonts from Google Fonts; offline, it falls back to system serif /
   sans / mono. The phone UI uses the system faces only, so it never blocks on the network.
-- **The phone needs the Mac awake and on the same Wi-Fi** for live figures. Off-network it shows
-  the last snapshot, labelled with when it was taken.
+- **The phone needs the Mac awake** for live figures, and a path to it — the same Wi-Fi, the
+  same tailnet, or the Cloudflare relay. With none of those it shows the last snapshot, labelled
+  with when it was taken and with which of those to go turn on.
+- **The iOS app allows cleartext HTTP.** It has to: the Mac serves plain HTTP, and a tailnet
+  address is in `100.64.0.0/10`, which App Transport Security does not count as local, so the
+  narrower `NSAllowsLocalNetworking` exception refuses it — silently, and looking exactly like a
+  sleeping Mac. What defends the connection instead is that the phone only talks to an address
+  the Mac handed it, with a bearer token, and that the tailnet leg is WireGuard the whole way.
 - **A free Apple ID signs the iOS app for seven days**, then it must be rebuilt from Xcode.
   That's an Apple limit, not one of this app's — the Safari route has no expiry.
