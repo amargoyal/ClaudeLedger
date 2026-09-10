@@ -39,14 +39,17 @@ if (isWin) app.setAppUserModelId('com.amargoyal.claudeledger');
 if (isDev) app.setPath('userData', `${app.getPath('userData')}-dev`);
 
 /**
- * How often the menu bar re-reads the account. This must be shorter than the
- * usage cache TTL in src/anthropic.js, not equal to it: when both were 5 minutes,
- * a tick would often find the cache aged 4:59, treat it as fresh, and skip the
- * refetch — so the indicator actually updated every ~10 minutes.
+ * How often the menu bar re-reads the account when nothing is happening.
+ *
+ * This must be shorter than the usage cache TTL in src/anthropic.js, not equal to
+ * it: when both were 5 minutes, a tick would often find the cache aged 4:59,
+ * treat it as fresh, and skip the refetch — so the indicator actually updated
+ * every ~10 minutes.
  *
  * Polling more often costs no extra requests. The TTL decides when a network call
- * happens (still at most one per 5 minutes); this only decides how soon after the
- * cache expires the title catches up.
+ * happens; this only decides how soon after the cache expires the title catches
+ * up. While you are actually working, the watcher below is what drives it, and
+ * this is the backstop for the windows that reset on their own.
  */
 const TRAY_POLL_MS = 60_000;
 
@@ -217,6 +220,8 @@ let tailscaleModule = null;
 let burnModule = null;
 let anthropic = null;
 let lastAccount = null;
+/** Unsubscribe from transcript changes, or null while nothing is watching. */
+let untrackActivity = null;
 
 // Only one instance — a second launch focuses the existing window instead of
 // starting a second HTTP listener and a second menu bar item.
@@ -788,6 +793,29 @@ async function refreshTray({ force = false } = {}) {
 }
 
 /**
+ * Update the menu bar as soon as a message is written, not up to a minute later.
+ *
+ * The percentage in the menu bar is the one number that is always on screen, and
+ * on a timer it was the last thing to know: a turn would finish, the dashboard
+ * would update, and the title would still be showing the old level. The watcher
+ * reports the write within a couple of hundred milliseconds, and the account read
+ * that follows is the one the shortened usage TTL was added for.
+ *
+ * It costs no extra requests on an idle machine — no writes, no wake-ups — and
+ * the rate-limit backoff sits in front of the fetch either way.
+ */
+async function trackActivity() {
+  if (untrackActivity) return;
+  try {
+    const watcher = await importLocal('src/watcher.js');
+    untrackActivity = watcher.subscribe(() => void refreshTray());
+  } catch (err) {
+    // The timer above still covers it; a missing watch is slower, not broken.
+    console.error('transcript watch unavailable:', err);
+  }
+}
+
+/**
  * Build the tray image in memory from the same glyph as the app icon — no separate
  * asset files to keep in sync.
  */
@@ -822,6 +850,7 @@ async function createTray() {
 
   await refreshTray();
   setInterval(() => refreshTray(), TRAY_POLL_MS);
+  await trackActivity();
 
   // Development affordance: the popover normally only opens on a tray click,
   // which is awkward to drive from a script or a test.
@@ -971,6 +1000,8 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  untrackActivity?.();
+  untrackActivity = null;
   serverInfo?.server?.close();
   // Sharing is scoped to a running app, so the port must not outlive it.
   void stopSharing();
