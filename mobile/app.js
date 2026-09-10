@@ -2468,7 +2468,10 @@ function closeStream() {
 function openStream() {
   const base = state.conn?.baseUrl;
   if (!base || typeof EventSource !== 'function') return;
-  if (stream && streamBase === base) return;
+  // A stream that has given up — an HTTP error rather than a dropped
+  // connection — stays closed forever, so a closed one is a reason to reopen
+  // and not a reason to skip.
+  if (stream && streamBase === base && stream.readyState !== EventSource.CLOSED) return;
   closeStream();
 
   // EventSource cannot set an Authorization header, so the token rides in the

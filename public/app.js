@@ -1856,7 +1856,15 @@ function stopPolling() {
   pulseTimer = null;
 }
 
+/**
+ * The live one, if there is one. EventSource reconnects itself after a dropped
+ * connection, but gives up for good on an HTTP error — a server restart mid-load
+ * is enough — and a closed one never reopens on its own.
+ */
+let pulseStream = null;
+
 function openStream() {
+  if (pulseStream && pulseStream.readyState !== EventSource.CLOSED) return;
   let stream;
   try {
     stream = new EventSource('/api/stream');
@@ -1864,6 +1872,7 @@ function openStream() {
     startPolling();
     return;
   }
+  pulseStream = stream;
   stream.addEventListener('pulse', (event) => {
     try {
       onPulse(JSON.parse(event.data));
@@ -1899,5 +1908,9 @@ document.addEventListener('visibilitychange', () => {
  * relative times on screen can be a minute out of date instead of two.
  */
 setInterval(() => {
-  if (document.visibilityState === 'visible') load();
+  if (document.visibilityState !== 'visible') return;
+  // Also the moment to notice a stream that has stopped for good and take
+  // another run at it, rather than living on the fallback poll until reload.
+  openStream();
+  load();
 }, 60_000);
