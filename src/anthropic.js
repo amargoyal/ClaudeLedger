@@ -25,14 +25,56 @@ const CACHE_FILE =
   process.env.CLAUDE_LEDGER_CACHE_FILE ?? join(homedir(), '.claude-ledger', 'account-cache.json');
 
 /**
- * Cache lifetimes. These are deliberately long: the usage endpoint rate-limits,
- * and utilization does not move second to second (reset times are absolute
- * timestamps, so the countdown is computed client-side from a cached value).
+ * Cache lifetimes.
+ *
+ * `profile` is identity and plan; it changes about never. `usage` is the number
+ * people actually watch, and it has two lifetimes because it moves for exactly
+ * one reason: a message was sent. Between messages the level is a constant and
+ * refetching it learns nothing — reset times are absolute timestamps, so even
+ * the countdown is computed client-side from a cached value. Right after one, it
+ * is out of date the moment it is read.
+ *
+ * A five-minute TTL priced that as "up to five minutes late, always", which is
+ * what made the session percentage feel frozen while a long run was burning
+ * through it. Tying the short lifetime to local transcript activity gets the
+ * freshness where it matters without buying it on an idle machine: the endpoint
+ * is asked again only after this Mac has actually written a message since the
+ * last answer, and then at most once every 30 seconds.
  */
 const TTL = {
   profile: 30 * 60_000,
-  usage: 5 * 60_000,
+  usageIdle: 5 * 60_000,
+  usageActive: 30_000,
 };
+
+/**
+ * When Claude Code last wrote to a transcript, as far as this process knows.
+ *
+ * Set by whoever is watching the directory — see `noteActivity`. Zero means
+ * nothing has reported any, which keeps the idle TTL in force and leaves the
+ * behaviour exactly as it was before the watcher existed.
+ */
+let lastActivityAt = 0;
+
+/**
+ * Which usage lifetime applies, given when activity last happened and when the
+ * cached value was fetched. Pure so the choice can be tested without a clock.
+ */
+export function usageTtlFor({ lastActivityAt: activity = 0, fetchedAt = 0 } = {}) {
+  return activity > fetchedAt ? TTL.usageActive : TTL.usageIdle;
+}
+
+/**
+ * Report that the local transcripts changed, so the next read of the account
+ * knows the level behind it has moved.
+ *
+ * Costs nothing on its own: it only shortens the window in which a cached value
+ * is still considered current, and the rate-limit backoff sits in front of it
+ * either way.
+ */
+export function noteActivity(at = Date.now()) {
+  if (at > lastActivityAt) lastActivityAt = at;
+}
 
 const BACKOFF_MIN = 5 * 60_000;
 const BACKOFF_MAX = 30 * 60_000;
@@ -284,9 +326,15 @@ export async function fetchAccount() {
   const token = creds.accessToken;
   const settle = (p) => p.then((r) => ({ ok: true, ...r }), (e) => ({ ok: false, error: e.message }));
 
+  loadCache();
+  const usageTtl = usageTtlFor({
+    lastActivityAt,
+    fetchedAt: store.get('usage')?.fetchedAt ?? 0,
+  });
+
   const [profile, usage] = await Promise.all([
     settle(cached('profile', TTL.profile, () => get('/api/oauth/profile', token))),
-    settle(cached('usage', TTL.usage, () => get('/api/oauth/usage', token))),
+    settle(cached('usage', usageTtl, () => get('/api/oauth/usage', token))),
   ]);
 
   if (!profile.ok && !usage.ok) {
