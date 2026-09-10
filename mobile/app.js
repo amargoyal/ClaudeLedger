@@ -17,7 +17,18 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const DEFAULT_PORT = 4317;
 /** 18 weeks of heatmap is what fits a phone without becoming a smear. */
 const HEATMAP_WEEKS = 18;
-const PULSE_MS = 60_000;
+/*
+ * How often to fall back to asking.
+ *
+ * A minute was the price of asking over a phone connection: the poll was the
+ * only way anything arrived, and doing it faster spent battery and cellular data
+ * on an answer that was usually "nothing changed". With the stream carrying the
+ * changes, this fires only while there is no stream — after a failover, on a
+ * flaky connection, on a Mac too old to offer one — so it can be short enough to
+ * be unnoticeable without costing anything the rest of the time.
+ */
+const PULSE_MS = 15_000;
+/** How long a screen may go without a full rebuild, however quiet things are. */
 const FULL_REFRESH_MS = 4 * 60_000;
 
 function el(tag, className, text) {
@@ -2412,22 +2423,97 @@ async function refresh({ silent = false } = {}) {
 }
 
 /**
- * Cheap change detection. `/api/snapshot` re-reads every transcript; `/api/pulse`
- * only stats them, so the phone can poll often without making the Mac work.
+ * Act on a transcript fingerprint, however it arrived.
+ *
+ * `/api/snapshot` re-reads every transcript; a fingerprint only stats them, so
+ * this is the cheap question the phone asks before the expensive one.
  */
+function applyPulse(pulse) {
+  const changed = !state.pulse || pulse.newest !== state.pulse.newest || pulse.files !== state.pulse.files;
+  state.pulse = pulse;
+  if (changed || Date.now() - state.lastFullAt > FULL_REFRESH_MS) {
+    return refresh({ silent: true });
+  }
+  if (state.offline) {
+    state.offline = false;
+    state.error = null;
+    renderChrome();
+  }
+  return Promise.resolve();
+}
+
+/*
+ * The Mac's change stream.
+ *
+ * Asking every sixty seconds meant a message could be a minute old before the
+ * phone showed it — long enough that the number in your hand disagreed with the
+ * one on the desk. The Mac pushes the same fingerprint down `/api/stream` as it
+ * writes it, so what is left to poll is only the case where no stream is up.
+ *
+ * It is bound to whichever address answered last. Failing over from Wi-Fi to the
+ * relay changes that address, so the stream is reopened against the new one
+ * rather than left attached to a route that no longer reaches this Mac.
+ */
+let stream = null;
+let streamBase = null;
+let streamOpen = false;
+
+function closeStream() {
+  stream?.close();
+  stream = null;
+  streamBase = null;
+  streamOpen = false;
+}
+
+function openStream() {
+  const base = state.conn?.baseUrl;
+  if (!base || typeof EventSource !== 'function') return;
+  // A stream that has given up — an HTTP error rather than a dropped
+  // connection — stays closed forever, so a closed one is a reason to reopen
+  // and not a reason to skip.
+  if (stream && streamBase === base && stream.readyState !== EventSource.CLOSED) return;
+  closeStream();
+
+  // EventSource cannot set an Authorization header, so the token rides in the
+  // query string — the one route on the Mac that accepts it there.
+  const token = state.conn?.token;
+  const url = `${base}/api/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  let source;
+  try {
+    source = new EventSource(url);
+  } catch {
+    return; // no stream; tick() keeps polling
+  }
+
+  stream = source;
+  streamBase = base;
+  source.addEventListener('open', () => {
+    streamOpen = true;
+  });
+  source.addEventListener('pulse', (event) => {
+    streamOpen = true;
+    let pulse;
+    try {
+      pulse = JSON.parse(event.data);
+    } catch {
+      return; // a truncated frame; the next one carries the same state
+    }
+    void applyPulse(pulse);
+  });
+  // The browser reconnects on its own. This only records that, until it does,
+  // the poll below is the only thing keeping the screen current.
+  source.addEventListener('error', () => {
+    streamOpen = false;
+  });
+}
+
+/** The fallback, for when there is no stream — and the clock-driven backstop. */
 async function tick() {
   if (document.hidden || !state.conn) return;
+  openStream();
+  if (streamOpen && Date.now() - state.lastFullAt <= FULL_REFRESH_MS) return;
   try {
-    const pulse = await api('/api/pulse', { timeout: 8000 });
-    const changed = !state.pulse || pulse.newest !== state.pulse.newest || pulse.files !== state.pulse.files;
-    state.pulse = pulse;
-    if (changed || Date.now() - state.lastFullAt > FULL_REFRESH_MS) {
-      await refresh({ silent: true });
-    } else if (state.offline) {
-      state.offline = false;
-      state.error = null;
-      renderChrome();
-    }
+    await applyPulse(await api('/api/pulse', { timeout: 8000 }));
   } catch {
     if (!state.offline) {
       state.offline = true;
@@ -2727,8 +2813,15 @@ function wireUI() {
   });
 
   addEventListener('orientationchange', () => setTimeout(render, 220));
+  // A backgrounded app is not allowed to do anything with what arrives, and iOS
+  // suspends the socket anyway — a stream held open across a long background is
+  // one that looks connected and delivers nothing. Dropping it and opening a
+  // fresh one on the way back is both cheaper and more honest; `tick()` opens it
+  // and asks once, so the first thing on screen is current rather than whatever
+  // was true when you left.
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) tick();
+    if (document.hidden) closeStream();
+    else tick();
   });
   Native.onResume(() => tick());
   Native.onUrl((url) => applyPairLink(url));
@@ -2769,6 +2862,7 @@ async function boot() {
   setTab(state.tab, { haptic: false });
 
   await refresh();
+  openStream();
   setInterval(tick, PULSE_MS);
 }
 

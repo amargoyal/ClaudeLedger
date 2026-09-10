@@ -358,8 +358,9 @@ below it.
 - The API reports a *level*, not a rate, so the rate is derived from stored readings: it
   appears only once there are two samples at least three minutes apart **in the same
   window**, and never extrapolates from a single reading.
-- Polls every 5 minutes — see [rate limiting](#rate-limiting-and-why-the-cache-is-on-disk)
-  for why not faster.
+- Updates as your transcripts are written, not on a timer — see
+  [how fast the numbers update](#how-fast-the-numbers-update). An open popover keeps step
+  with the title above it instead of showing whatever was true when it opened.
 
 <br clear="right">
 
@@ -437,8 +438,12 @@ absence caused a real failure.
 
 <br>
 
-1. **A 5-minute TTL and matching poll intervals** (menu bar 5 min, dashboard 2 min). Polling
-   both surfaces every 60 s against a 45 s cache was enough to earn a `429`.
+1. **A TTL that follows the work, not the clock.** `usage` is cached for 5 minutes while
+   this Mac is idle and for 30 seconds once it has written a transcript since the cached
+   answer was fetched — because that level moves for exactly one reason, and between
+   messages refetching it learns nothing. An active hour is capped at two requests a minute;
+   an idle one costs what it always did. Polling both surfaces every 60 s against a 45 s
+   cache was enough to earn a `429`, which is what the whole layer is calibrated against.
 2. **Stale-but-valid over empty.** A failed refresh returns the last good value flagged
    `stale`, so a transient `429` labels the panel "cached 6m ago" instead of blanking it.
    Invalidation therefore *expires* entries rather than deleting them — deleting would throw
@@ -467,6 +472,32 @@ invalidated on mtime and size.
 > totals from double-counting.
 
 **Your account** — only the *Usage limits* section, live from the two endpoints above.
+
+### How fast the numbers update
+
+Claude Code appends to a transcript the moment a message completes, so anything that waits
+for a timer is late by construction. Nothing waits for one:
+
+```
+~/.claude/projects/**   →   fs.watch   →   GET /api/stream   →   window · phone · menu bar
+        write                ~130ms         server-sent event        redraw
+```
+
+The server watches the directory, collapses each burst of filesystem events into one
+fingerprint, and pushes it to every open client. A message lands on screen in about a fifth
+of a second, on the phone as well as the Mac — the phone holds the same stream over Wi-Fi,
+Tailscale or the relay, and reopens it against the address that answers when it fails over.
+
+Three consequences worth knowing:
+
+- **Polling is the fallback, not the mechanism.** A client with no stream — one that dropped,
+  or a Mac too old to offer one — falls back to `GET /api/pulse` every 5 s in the window and
+  15 s on the phone, which is what every client used to do all the time.
+- **A write is what makes the account worth re-reading.** The same watch tells the usage cache
+  that the level behind it has moved; see [rate limiting](#rate-limiting-and-why-the-cache-is-on-disk).
+- **Nothing is asked of an idle machine.** No writes means no events, no snapshot builds and
+  no API calls beyond the once-a-minute backstop that catches a limit window resetting on its
+  own.
 
 ### "API-equivalent" cost
 
@@ -557,6 +588,7 @@ electron/preload-pair.cjs        the pairing window's bridge
 src/credentials.js               reads the Claude Code OAuth credential (read-only)
 src/anthropic.js                 profile + usage, caching, backoff, burn-rate samples
 src/transcripts.js               JSONL scan, parse, de-duplicate
+src/watcher.js                   watches the transcript directory, reports what changed
 src/aggregate.js                 all metrics: ranges, streaks, heatmap, models, cost
 src/pricing.js                   per-model list prices and cache multipliers
 src/lan.js                       phone pairing: codes, device tokens, interfaces
@@ -570,6 +602,7 @@ capacitor.config.json            iOS wrapper config (webDir: mobile)
 scripts/make-icon.mjs            builds icon.png/icns from src/mark.js
 scripts/ios-configure.mjs        reapplies Info.plist keys and iOS assets after cap sync
 scripts/qr-selftest.mjs          validates the QR encoder against the published tables
+scripts/live-selftest.mjs        watch, event stream and usage-lifetime checks, on the wire
 ```
 
 The popover and pairing renderers are sandboxed with no Node and no network of their own — they
@@ -600,13 +633,15 @@ pairing window — both are otherwise awkward to drive from a script.
 | `GET /api/history?since=<ms>` | recorded limit readings |
 | `GET /api/usage-curve?from&to&points&model` | reconstructed cumulative usage for a window |
 | `GET /api/pulse` | cheap transcript fingerprint, for change detection |
+| `GET /api/stream` | server-sent events: the same fingerprint, pushed as it changes |
 | `POST /api/reconnect` | drops caches and re-reads the credential |
 | `GET /api/ping` | "is a Claude Ledger here?" — says nothing about the account |
 | `POST /api/pair` | `{code, name}` → a device token. Shared listener only |
 | `GET /api/devices` | paired phones — never their tokens |
 
 On the shared listener every route above needs `Authorization: Bearer <device token>` except
-`/api/ping` and `/api/pair`.
+`/api/ping` and `/api/pair`. `/api/stream` also accepts the token as a `?token=` query
+parameter, because `EventSource` cannot set a request header.
 
 ## Known limitations
 

@@ -262,6 +262,8 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') api.close();
 });
 
-// The main process tells us to re-read whenever it reopens the popover.
+// The main process tells us to re-read whenever it reopens the popover, and
+// hands over new numbers while it is already open.
 api?.onShow?.(load);
+api?.onAccount?.((account) => render(account));
 load();

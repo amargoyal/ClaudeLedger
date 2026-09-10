@@ -3,11 +3,12 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { fetchAccount, invalidateAccountCache } from './src/anthropic.js';
+import { fetchAccount, invalidateAccountCache, noteActivity } from './src/anthropic.js';
 import { readConnection } from './src/credentials.js';
 import { METRIC_IDS, buildSnapshot, metricSeries, usageCurve } from './src/aggregate.js';
 import { query as queryHistory, span as historySpan } from './src/history.js';
 import { fingerprint, loadEvents } from './src/transcripts.js';
+import { current as currentPulse, subscribe as subscribePulse } from './src/watcher.js';
 import { refreshTunnel, tunnelState } from './src/tunnel.js';
 import { tailscaleState } from './src/tailscale.js';
 import {
@@ -170,6 +171,49 @@ function pollReach() {
   void refreshTunnel();
 }
 
+/*
+ * Building a snapshot is the expensive thing this server does: a warm read of
+ * ~1500 transcripts is 40ms and the aggregation over ~95k messages is another
+ * 150ms. That was affordable when one window asked every two minutes. Now a
+ * single new message wakes the window, the menu bar popover and the phone at the
+ * same instant, and three identical builds in a row is half a second of a
+ * single-threaded process doing the same arithmetic three times — during which
+ * it is not writing to the event streams either.
+ *
+ * So concurrent readers share one in-flight read, and a build is reused while
+ * the events behind it are unchanged. Freshness does not suffer: the memo key
+ * contains the transcript fingerprint, so the write that triggered the wake-up
+ * has already invalidated it. The age cap is only there for the labels that move
+ * on their own — "3h ago", today's row in the heatmap — on a machine where
+ * nothing is being written at all.
+ */
+const SNAPSHOT_MAX_AGE_MS = 10_000;
+/** @type {{ key: string, at: number, value: unknown } | null} */
+let snapshotMemo = null;
+/** @type {Promise<Awaited<ReturnType<typeof loadEvents>>> | null} */
+let eventsInFlight = null;
+
+function loadEventsShared() {
+  if (!eventsInFlight) {
+    eventsInFlight = loadEvents().finally(() => {
+      eventsInFlight = null;
+    });
+  }
+  return eventsInFlight;
+}
+
+function snapshotFor(events, { range, weeks }) {
+  const { files, bytes, lastTs } = events.meta;
+  const key = `${range}:${weeks}:${files}:${bytes}:${lastTs}`;
+  const now = Date.now();
+  if (snapshotMemo && snapshotMemo.key === key && now - snapshotMemo.at < SNAPSHOT_MAX_AGE_MS) {
+    return snapshotMemo.value;
+  }
+  const value = buildSnapshot(events, { range, weeks });
+  snapshotMemo = { key, at: now, value };
+  return value;
+}
+
 async function handleSnapshot(url, res) {
   const range = url.searchParams.get('range') ?? '7d';
   const weeksRaw = Number.parseInt(url.searchParams.get('weeks') ?? '26', 10);
@@ -178,17 +222,98 @@ async function handleSnapshot(url, res) {
   // Local transcripts and the account API are independent: if the network is
   // down, every locally-sourced panel still renders.
   const [events, account] = await Promise.all([
-    loadEvents(),
+    loadEventsShared(),
     fetchAccount().catch((e) => ({ status: 'error', error: e.message })),
   ]);
 
   sendJSON(res, 200, {
-    snapshot: buildSnapshot(events, { range, weeks }),
+    snapshot: snapshotFor(events, { range, weeks }),
     account,
     app: { version: APP_VERSION },
     origins: reachableOrigins(lanPort),
     reach: reachState(),
   });
+}
+
+/*
+ * The change stream.
+ *
+ * A client that polls can only be as fresh as its interval, and the intervals
+ * here were chosen to keep the Mac from re-reading every transcript on a timer —
+ * which made the polls slow *and* the numbers late. Pushing inverts that: the
+ * server says "something changed" the moment it does, and a client that has been
+ * told nothing has nothing to ask about.
+ *
+ * The payload is the same fingerprint `/api/pulse` returns, so a client can keep
+ * exactly the logic it already had and only change where the value comes from.
+ * `/api/pulse` stays for clients that cannot hold a connection open.
+ */
+
+/**
+ * How often to write a comment line into an idle stream.
+ *
+ * Nothing in the protocol needs it, but everything in between does: a phone on
+ * cellular sits behind carrier NAT, and the Cloudflare tunnel closes a connection
+ * that has been silent for 100 seconds. A stream that is quiet for an hour
+ * because nobody is coding must not be mistaken for a stream that has died.
+ */
+const STREAM_HEARTBEAT_MS = 25_000;
+
+/** One server-sent event. JSON never contains a raw newline, so one data line does. */
+export function sseFrame(event, data) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function handleStream(req, res) {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-store',
+    connection: 'keep-alive',
+    // Tells a proxy that buffers response bodies — Cloudflare's edge among them —
+    // not to, since a buffered event stream arrives all at once or never.
+    'x-accel-buffering': 'no',
+  });
+  res.flushHeaders?.();
+  // Nagle would hold a 60-byte event back waiting for company that never comes.
+  req.socket?.setNoDelay(true);
+  // The events are minutes apart when the machine is idle; an inactivity timeout
+  // would read that as a dead socket.
+  req.socket?.setTimeout(0);
+
+  // How long the browser waits before reconnecting. The default is three seconds
+  // and this drops the gap after a Mac wakes from sleep to about one.
+  res.write('retry: 1000\n\n');
+
+  const send = (event, data) => {
+    try {
+      res.write(sseFrame(event, data));
+    } catch {
+      /* the socket went away; the close handler is already on its way */
+    }
+  };
+
+  // Hand over what is known right now, so a client that reconnects after a sleep
+  // re-syncs immediately instead of waiting for the next message to be written.
+  const known = currentPulse();
+  if (known) send('pulse', known);
+
+  const off = subscribePulse((fp) => send('pulse', fp));
+  const beat = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      /* same */
+    }
+  }, STREAM_HEARTBEAT_MS);
+  beat.unref?.();
+
+  const close = () => {
+    clearInterval(beat);
+    off();
+  };
+  req.on('close', close);
+  res.on('close', close);
+  res.on('error', close);
 }
 
 /**
@@ -221,6 +346,24 @@ function readJSONBody(req, limit = 4096) {
   });
 }
 
+/*
+ * Tell the account cache when this Mac writes a message.
+ *
+ * The usage endpoint is the one number that does not come from the transcripts,
+ * and it only moves when they do. Handing the watcher's timestamps to the cache
+ * is what lets it hold a value for five minutes on an idle machine and still
+ * refetch within seconds of a long run finishing a turn.
+ *
+ * Started with the first server rather than on the first stream: the menu bar
+ * item reads the account directly, without ever opening one.
+ */
+let activityWatch = null;
+
+function watchForActivity() {
+  if (activityWatch) return;
+  activityWatch = subscribePulse((fp) => noteActivity(fp.newest || Date.now()));
+}
+
 /** Routes a phone may call before it holds a token. Everything else needs one. */
 const PUBLIC_LAN_ROUTES = new Set(['/api/ping', '/api/pair']);
 
@@ -233,6 +376,7 @@ const PUBLIC_LAN_ROUTES = new Set(['/api/ping', '/api/pair']);
  */
 export function createApp({ mode = 'local' } = {}) {
   const isLan = mode === 'lan';
+  watchForActivity();
 
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -254,7 +398,16 @@ export function createApp({ mode = 'local' } = {}) {
     let device = null;
     if (isLan && url.pathname.startsWith('/api/') && !PUBLIC_LAN_ROUTES.has(url.pathname)) {
       const header = req.headers.authorization ?? '';
-      device = verifyToken(header.startsWith('Bearer ') ? header.slice(7) : '');
+      // EventSource cannot set a request header, so the stream — and nothing
+      // else — also accepts the token as a query parameter. It travels over the
+      // same connection either way; this listener writes no request log, and the
+      // token is already in the phone's storage next to the address it is for.
+      const bearer = header.startsWith('Bearer ')
+        ? header.slice(7)
+        : url.pathname === '/api/stream'
+          ? (url.searchParams.get('token') ?? '')
+          : '';
+      device = verifyToken(bearer);
       if (!device) {
         sendJSON(res, 401, { error: 'This device is not paired.', code: 'unpaired' });
         return;
@@ -334,7 +487,7 @@ export function createApp({ mode = 'local' } = {}) {
           sendJSON(res, 400, { error: `metric must be one of ${METRIC_IDS.join(', ')}` });
           return;
         }
-        const events = await loadEvents();
+        const events = await loadEventsShared();
         sendJSON(res, 200, metricSeries(events, { metric, range: url.searchParams.get('range') ?? '7d' }));
         return;
       }
@@ -347,13 +500,17 @@ export function createApp({ mode = 'local' } = {}) {
         }
         const points = Math.min(400, Math.max(10, Number.parseInt(url.searchParams.get('points') ?? '120', 10)));
         const model = url.searchParams.get('model') || null;
-        const { assistant } = await loadEvents();
+        const { assistant } = await loadEventsShared();
         sendJSON(res, 200, usageCurve(assistant, { from, to, points, model }));
         return;
       }
       if (url.pathname === '/api/pulse') {
-        // Polled frequently by the dashboard; must stay cheap (stat only).
+        // The fallback for a client with no open stream; must stay cheap (stat only).
         sendJSON(res, 200, await fingerprint());
+        return;
+      }
+      if (url.pathname === '/api/stream') {
+        handleStream(req, res);
         return;
       }
       if (url.pathname === '/api/reconnect' && req.method === 'POST') {
@@ -413,6 +570,12 @@ export function startServer({ port = Number(process.env.PORT ?? 4317), host = '1
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => {
+      // Start reading the transcripts now rather than when the first request
+      // arrives. A cold scan of a large history is seconds of disk, and the app
+      // spends those seconds creating a window anyway — so overlap them, and the
+      // first snapshot the window asks for finds the read already done or under
+      // way instead of starting one.
+      void loadEventsShared();
       const addr = server.address();
       resolve({ server, port: typeof addr === 'object' && addr ? addr.port : port, host });
     });
