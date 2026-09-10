@@ -2810,8 +2810,15 @@ function wireUI() {
   });
 
   addEventListener('orientationchange', () => setTimeout(render, 220));
+  // A backgrounded app is not allowed to do anything with what arrives, and iOS
+  // suspends the socket anyway — a stream held open across a long background is
+  // one that looks connected and delivers nothing. Dropping it and opening a
+  // fresh one on the way back is both cheaper and more honest; `tick()` opens it
+  // and asks once, so the first thing on screen is current rather than whatever
+  // was true when you left.
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) tick();
+    if (document.hidden) closeStream();
+    else tick();
   });
   Native.onResume(() => tick());
   Native.onUrl((url) => applyPairLink(url));
