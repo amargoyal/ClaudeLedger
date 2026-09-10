@@ -1,6 +1,6 @@
 {
   "name": "claude-ledger",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Mac and Windows dashboard for your Claude Code usage, authenticated with your Claude account (no API key).",
   "author": "Amar Goyal",
