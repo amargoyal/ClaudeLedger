@@ -1879,6 +1879,14 @@ function openStream() {
 
 openStream();
 
+// Coming back to the window is the moment where being right matters more than
+// being cheap. The stream stays open in the background, but a Mac that slept
+// missed every event while it was asleep and reconnects a beat after it wakes,
+// so the window asks once on its own rather than waiting to be told.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') load();
+});
+
 // Refresh quietly while the window is open. Two minutes, not one: each load also
 // asks for account data, and polling that endpoint aggressively from both here and
 // the menu bar is what got this app rate limited during development. The server's
