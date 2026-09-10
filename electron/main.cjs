@@ -789,6 +789,12 @@ async function refreshTray({ force = false } = {}) {
     if (isMac) tray.setTitle(trayTitle(lastAccount));
     tray.setToolTip(trayTooltip(lastAccount));
   }
+  // An open popover is looking at the same numbers as the title next to it, and
+  // it only re-read them when it was opened — so a popover left open while a run
+  // finished disagreed with the title above it until it was closed and reopened.
+  if (panel && !panel.isDestroyed() && panel.isVisible()) {
+    panel.webContents.send('ledger:account', lastAccount);
+  }
   return lastAccount;
 }
 

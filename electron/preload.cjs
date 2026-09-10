@@ -13,4 +13,6 @@ contextBridge.exposeInMainWorld('ledger', {
   resize: (height) => ipcRenderer.send('ledger:resize', height),
   /** Fired each time the popover is shown, so it can re-read fresh values. */
   onShow: (fn) => ipcRenderer.on('ledger:shown', () => fn()),
+  /** Fired when the account changes underneath an already-open popover. */
+  onAccount: (fn) => ipcRenderer.on('ledger:account', (_event, account) => fn(account)),
 });
