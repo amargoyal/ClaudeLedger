@@ -171,6 +171,49 @@ function pollReach() {
   void refreshTunnel();
 }
 
+/*
+ * Building a snapshot is the expensive thing this server does: a warm read of
+ * ~1500 transcripts is 40ms and the aggregation over ~95k messages is another
+ * 150ms. That was affordable when one window asked every two minutes. Now a
+ * single new message wakes the window, the menu bar popover and the phone at the
+ * same instant, and three identical builds in a row is half a second of a
+ * single-threaded process doing the same arithmetic three times — during which
+ * it is not writing to the event streams either.
+ *
+ * So concurrent readers share one in-flight read, and a build is reused while
+ * the events behind it are unchanged. Freshness does not suffer: the memo key
+ * contains the transcript fingerprint, so the write that triggered the wake-up
+ * has already invalidated it. The age cap is only there for the labels that move
+ * on their own — "3h ago", today's row in the heatmap — on a machine where
+ * nothing is being written at all.
+ */
+const SNAPSHOT_MAX_AGE_MS = 10_000;
+/** @type {{ key: string, at: number, value: unknown } | null} */
+let snapshotMemo = null;
+/** @type {Promise<Awaited<ReturnType<typeof loadEvents>>> | null} */
+let eventsInFlight = null;
+
+function loadEventsShared() {
+  if (!eventsInFlight) {
+    eventsInFlight = loadEvents().finally(() => {
+      eventsInFlight = null;
+    });
+  }
+  return eventsInFlight;
+}
+
+function snapshotFor(events, { range, weeks }) {
+  const { files, bytes, lastTs } = events.meta;
+  const key = `${range}:${weeks}:${files}:${bytes}:${lastTs}`;
+  const now = Date.now();
+  if (snapshotMemo && snapshotMemo.key === key && now - snapshotMemo.at < SNAPSHOT_MAX_AGE_MS) {
+    return snapshotMemo.value;
+  }
+  const value = buildSnapshot(events, { range, weeks });
+  snapshotMemo = { key, at: now, value };
+  return value;
+}
+
 async function handleSnapshot(url, res) {
   const range = url.searchParams.get('range') ?? '7d';
   const weeksRaw = Number.parseInt(url.searchParams.get('weeks') ?? '26', 10);
@@ -179,12 +222,12 @@ async function handleSnapshot(url, res) {
   // Local transcripts and the account API are independent: if the network is
   // down, every locally-sourced panel still renders.
   const [events, account] = await Promise.all([
-    loadEvents(),
+    loadEventsShared(),
     fetchAccount().catch((e) => ({ status: 'error', error: e.message })),
   ]);
 
   sendJSON(res, 200, {
-    snapshot: buildSnapshot(events, { range, weeks }),
+    snapshot: snapshotFor(events, { range, weeks }),
     account,
     app: { version: APP_VERSION },
     origins: reachableOrigins(lanPort),
@@ -425,7 +468,7 @@ export function createApp({ mode = 'local' } = {}) {
           sendJSON(res, 400, { error: `metric must be one of ${METRIC_IDS.join(', ')}` });
           return;
         }
-        const events = await loadEvents();
+        const events = await loadEventsShared();
         sendJSON(res, 200, metricSeries(events, { metric, range: url.searchParams.get('range') ?? '7d' }));
         return;
       }
@@ -438,7 +481,7 @@ export function createApp({ mode = 'local' } = {}) {
         }
         const points = Math.min(400, Math.max(10, Number.parseInt(url.searchParams.get('points') ?? '120', 10)));
         const model = url.searchParams.get('model') || null;
-        const { assistant } = await loadEvents();
+        const { assistant } = await loadEventsShared();
         sendJSON(res, 200, usageCurve(assistant, { from, to, points, model }));
         return;
       }
