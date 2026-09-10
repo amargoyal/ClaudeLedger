@@ -8,6 +8,7 @@ import { readConnection } from './src/credentials.js';
 import { METRIC_IDS, buildSnapshot, metricSeries, usageCurve } from './src/aggregate.js';
 import { query as queryHistory, span as historySpan } from './src/history.js';
 import { fingerprint, loadEvents } from './src/transcripts.js';
+import { current as currentPulse, subscribe as subscribePulse } from './src/watcher.js';
 import { refreshTunnel, tunnelState } from './src/tunnel.js';
 import { tailscaleState } from './src/tailscale.js';
 import {
@@ -191,6 +192,87 @@ async function handleSnapshot(url, res) {
   });
 }
 
+/*
+ * The change stream.
+ *
+ * A client that polls can only be as fresh as its interval, and the intervals
+ * here were chosen to keep the Mac from re-reading every transcript on a timer —
+ * which made the polls slow *and* the numbers late. Pushing inverts that: the
+ * server says "something changed" the moment it does, and a client that has been
+ * told nothing has nothing to ask about.
+ *
+ * The payload is the same fingerprint `/api/pulse` returns, so a client can keep
+ * exactly the logic it already had and only change where the value comes from.
+ * `/api/pulse` stays for clients that cannot hold a connection open.
+ */
+
+/**
+ * How often to write a comment line into an idle stream.
+ *
+ * Nothing in the protocol needs it, but everything in between does: a phone on
+ * cellular sits behind carrier NAT, and the Cloudflare tunnel closes a connection
+ * that has been silent for 100 seconds. A stream that is quiet for an hour
+ * because nobody is coding must not be mistaken for a stream that has died.
+ */
+const STREAM_HEARTBEAT_MS = 25_000;
+
+/** One server-sent event. JSON never contains a raw newline, so one data line does. */
+export function sseFrame(event, data) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function handleStream(req, res) {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-store',
+    connection: 'keep-alive',
+    // Tells a proxy that buffers response bodies — Cloudflare's edge among them —
+    // not to, since a buffered event stream arrives all at once or never.
+    'x-accel-buffering': 'no',
+  });
+  res.flushHeaders?.();
+  // Nagle would hold a 60-byte event back waiting for company that never comes.
+  req.socket?.setNoDelay(true);
+  // The events are minutes apart when the machine is idle; an inactivity timeout
+  // would read that as a dead socket.
+  req.socket?.setTimeout(0);
+
+  // How long the browser waits before reconnecting. The default is three seconds
+  // and this drops the gap after a Mac wakes from sleep to about one.
+  res.write('retry: 1000\n\n');
+
+  const send = (event, data) => {
+    try {
+      res.write(sseFrame(event, data));
+    } catch {
+      /* the socket went away; the close handler is already on its way */
+    }
+  };
+
+  // Hand over what is known right now, so a client that reconnects after a sleep
+  // re-syncs immediately instead of waiting for the next message to be written.
+  const known = currentPulse();
+  if (known) send('pulse', known);
+
+  const off = subscribePulse((fp) => send('pulse', fp));
+  const beat = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      /* same */
+    }
+  }, STREAM_HEARTBEAT_MS);
+  beat.unref?.();
+
+  const close = () => {
+    clearInterval(beat);
+    off();
+  };
+  req.on('close', close);
+  res.on('close', close);
+  res.on('error', close);
+}
+
 /**
  * Read a JSON request body, with a hard cap.
  *
@@ -254,7 +336,16 @@ export function createApp({ mode = 'local' } = {}) {
     let device = null;
     if (isLan && url.pathname.startsWith('/api/') && !PUBLIC_LAN_ROUTES.has(url.pathname)) {
       const header = req.headers.authorization ?? '';
-      device = verifyToken(header.startsWith('Bearer ') ? header.slice(7) : '');
+      // EventSource cannot set a request header, so the stream — and nothing
+      // else — also accepts the token as a query parameter. It travels over the
+      // same connection either way; this listener writes no request log, and the
+      // token is already in the phone's storage next to the address it is for.
+      const bearer = header.startsWith('Bearer ')
+        ? header.slice(7)
+        : url.pathname === '/api/stream'
+          ? (url.searchParams.get('token') ?? '')
+          : '';
+      device = verifyToken(bearer);
       if (!device) {
         sendJSON(res, 401, { error: 'This device is not paired.', code: 'unpaired' });
         return;
@@ -352,8 +443,12 @@ export function createApp({ mode = 'local' } = {}) {
         return;
       }
       if (url.pathname === '/api/pulse') {
-        // Polled frequently by the dashboard; must stay cheap (stat only).
+        // The fallback for a client with no open stream; must stay cheap (stat only).
         sendJSON(res, 200, await fingerprint());
+        return;
+      }
+      if (url.pathname === '/api/stream') {
+        handleStream(req, res);
         return;
       }
       if (url.pathname === '/api/reconnect' && req.method === 'POST') {
