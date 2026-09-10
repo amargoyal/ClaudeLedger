@@ -570,6 +570,12 @@ export function startServer({ port = Number(process.env.PORT ?? 4317), host = '1
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => {
+      // Start reading the transcripts now rather than when the first request
+      // arrives. A cold scan of a large history is seconds of disk, and the app
+      // spends those seconds creating a window anyway — so overlap them, and the
+      // first snapshot the window asks for finds the read already done or under
+      // way instead of starting one.
+      void loadEventsShared();
       const addr = server.address();
       resolve({ server, port: typeof addr === 'object' && addr ? addr.port : port, host });
     });
