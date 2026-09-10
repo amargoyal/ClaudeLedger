@@ -1815,27 +1815,74 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
 });
 
 load();
-/**
- * Poll a cheap fingerprint of the transcript files so a new message shows up in
- * seconds. Only a change triggers the (heavier) snapshot reload, and account data
- * is still governed by its own 5-minute cache — so this costs no API calls.
+
+/*
+ * Where new data comes from.
+ *
+ * This used to be a five-second poll of `/api/pulse`, which meant a message you
+ * had just watched Claude Code finish took up to five seconds to show up here,
+ * and cost the Mac a stat of every transcript twelve times a minute to discover
+ * that nothing had happened. The server watches the directory now and pushes the
+ * same fingerprint down `/api/stream` the moment it changes, so the comparison
+ * below is unchanged — only its source is.
+ *
+ * The poll survives as the fallback. A stream can be refused or dropped, and a
+ * client with no stream should be as good as it used to be rather than silent.
  */
-setInterval(async () => {
+function onPulse(p) {
+  const key = `${p.files}:${p.bytes}:${p.newest}`;
+  if (state.pulse && state.pulse !== key) load();
+  state.pulse = key;
+}
+
+let pulseTimer = null;
+
+async function pollPulse() {
   if (document.visibilityState !== 'visible') return;
   try {
-    const p = await (await fetch('/api/pulse')).json();
-    const key = `${p.files}:${p.bytes}:${p.newest}`;
-    if (state.pulse && state.pulse !== key) load();
-    state.pulse = key;
+    onPulse(await (await fetch('/api/pulse')).json());
   } catch {
     /* server not ready */
   }
-}, 5_000);
+}
+
+function startPolling() {
+  if (pulseTimer) return;
+  pulseTimer = setInterval(pollPulse, 5_000);
+}
+
+function stopPolling() {
+  clearInterval(pulseTimer);
+  pulseTimer = null;
+}
+
+function openStream() {
+  let stream;
+  try {
+    stream = new EventSource('/api/stream');
+  } catch {
+    startPolling();
+    return;
+  }
+  stream.addEventListener('pulse', (event) => {
+    try {
+      onPulse(JSON.parse(event.data));
+    } catch {
+      /* a truncated frame; the next one carries the same state */
+    }
+  });
+  // EventSource reconnects on its own, so an error is "down for now", not "gone".
+  // Polling covers the gap and stops again the moment the stream is back.
+  stream.addEventListener('open', stopPolling);
+  stream.addEventListener('error', startPolling);
+}
+
+openStream();
 
 // Refresh quietly while the window is open. Two minutes, not one: each load also
 // asks for account data, and polling that endpoint aggressively from both here and
 // the menu bar is what got this app rate limited during development. The server's
-// 5-minute usage cache absorbs the rest.
+// usage cache absorbs the rest.
 setInterval(() => {
   if (document.visibilityState === 'visible') load();
 }, 120_000);
