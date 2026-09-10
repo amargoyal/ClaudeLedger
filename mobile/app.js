@@ -2412,22 +2412,94 @@ async function refresh({ silent = false } = {}) {
 }
 
 /**
- * Cheap change detection. `/api/snapshot` re-reads every transcript; `/api/pulse`
- * only stats them, so the phone can poll often without making the Mac work.
+ * Act on a transcript fingerprint, however it arrived.
+ *
+ * `/api/snapshot` re-reads every transcript; a fingerprint only stats them, so
+ * this is the cheap question the phone asks before the expensive one.
  */
+function applyPulse(pulse) {
+  const changed = !state.pulse || pulse.newest !== state.pulse.newest || pulse.files !== state.pulse.files;
+  state.pulse = pulse;
+  if (changed || Date.now() - state.lastFullAt > FULL_REFRESH_MS) {
+    return refresh({ silent: true });
+  }
+  if (state.offline) {
+    state.offline = false;
+    state.error = null;
+    renderChrome();
+  }
+  return Promise.resolve();
+}
+
+/*
+ * The Mac's change stream.
+ *
+ * Asking every sixty seconds meant a message could be a minute old before the
+ * phone showed it — long enough that the number in your hand disagreed with the
+ * one on the desk. The Mac pushes the same fingerprint down `/api/stream` as it
+ * writes it, so what is left to poll is only the case where no stream is up.
+ *
+ * It is bound to whichever address answered last. Failing over from Wi-Fi to the
+ * relay changes that address, so the stream is reopened against the new one
+ * rather than left attached to a route that no longer reaches this Mac.
+ */
+let stream = null;
+let streamBase = null;
+let streamOpen = false;
+
+function closeStream() {
+  stream?.close();
+  stream = null;
+  streamBase = null;
+  streamOpen = false;
+}
+
+function openStream() {
+  const base = state.conn?.baseUrl;
+  if (!base || typeof EventSource !== 'function') return;
+  if (stream && streamBase === base) return;
+  closeStream();
+
+  // EventSource cannot set an Authorization header, so the token rides in the
+  // query string — the one route on the Mac that accepts it there.
+  const token = state.conn?.token;
+  const url = `${base}/api/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  let source;
+  try {
+    source = new EventSource(url);
+  } catch {
+    return; // no stream; tick() keeps polling
+  }
+
+  stream = source;
+  streamBase = base;
+  source.addEventListener('open', () => {
+    streamOpen = true;
+  });
+  source.addEventListener('pulse', (event) => {
+    streamOpen = true;
+    let pulse;
+    try {
+      pulse = JSON.parse(event.data);
+    } catch {
+      return; // a truncated frame; the next one carries the same state
+    }
+    void applyPulse(pulse);
+  });
+  // The browser reconnects on its own. This only records that, until it does,
+  // the poll below is the only thing keeping the screen current.
+  source.addEventListener('error', () => {
+    streamOpen = false;
+  });
+}
+
+/** The fallback, for when there is no stream — and the clock-driven backstop. */
 async function tick() {
   if (document.hidden || !state.conn) return;
+  openStream();
+  if (streamOpen && Date.now() - state.lastFullAt <= FULL_REFRESH_MS) return;
   try {
-    const pulse = await api('/api/pulse', { timeout: 8000 });
-    const changed = !state.pulse || pulse.newest !== state.pulse.newest || pulse.files !== state.pulse.files;
-    state.pulse = pulse;
-    if (changed || Date.now() - state.lastFullAt > FULL_REFRESH_MS) {
-      await refresh({ silent: true });
-    } else if (state.offline) {
-      state.offline = false;
-      state.error = null;
-      renderChrome();
-    }
+    await applyPulse(await api('/api/pulse', { timeout: 8000 }));
   } catch {
     if (!state.offline) {
       state.offline = true;
@@ -2769,6 +2841,7 @@ async function boot() {
   setTab(state.tab, { haptic: false });
 
   await refresh();
+  openStream();
   setInterval(tick, PULSE_MS);
 }
 
