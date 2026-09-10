@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { fetchAccount, invalidateAccountCache } from './src/anthropic.js';
+import { fetchAccount, invalidateAccountCache, noteActivity } from './src/anthropic.js';
 import { readConnection } from './src/credentials.js';
 import { METRIC_IDS, buildSnapshot, metricSeries, usageCurve } from './src/aggregate.js';
 import { query as queryHistory, span as historySpan } from './src/history.js';
@@ -346,6 +346,24 @@ function readJSONBody(req, limit = 4096) {
   });
 }
 
+/*
+ * Tell the account cache when this Mac writes a message.
+ *
+ * The usage endpoint is the one number that does not come from the transcripts,
+ * and it only moves when they do. Handing the watcher's timestamps to the cache
+ * is what lets it hold a value for five minutes on an idle machine and still
+ * refetch within seconds of a long run finishing a turn.
+ *
+ * Started with the first server rather than on the first stream: the menu bar
+ * item reads the account directly, without ever opening one.
+ */
+let activityWatch = null;
+
+function watchForActivity() {
+  if (activityWatch) return;
+  activityWatch = subscribePulse((fp) => noteActivity(fp.newest || Date.now()));
+}
+
 /** Routes a phone may call before it holds a token. Everything else needs one. */
 const PUBLIC_LAN_ROUTES = new Set(['/api/ping', '/api/pair']);
 
@@ -358,6 +376,7 @@ const PUBLIC_LAN_ROUTES = new Set(['/api/ping', '/api/pair']);
  */
 export function createApp({ mode = 'local' } = {}) {
   const isLan = mode === 'lan';
+  watchForActivity();
 
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
