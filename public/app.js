@@ -1887,10 +1887,17 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') load();
 });
 
-// Refresh quietly while the window is open. Two minutes, not one: each load also
-// asks for account data, and polling that endpoint aggressively from both here and
-// the menu bar is what got this app rate limited during development. The server's
-// usage cache absorbs the rest.
+/*
+ * The backstop, for everything the stream cannot announce: a limit window
+ * resetting, a countdown ticking down, usage burned on another machine.
+ *
+ * It was two minutes because each load also asked for account data, and polling
+ * that endpoint hard from both here and the menu bar is what got this app rate
+ * limited during development. Neither half of that still costs anything: the
+ * network call is decided by the server's usage cache, not by how often it is
+ * asked, and repeated snapshot builds are shared rather than recomputed. So the
+ * relative times on screen can be a minute out of date instead of two.
+ */
 setInterval(() => {
   if (document.visibilityState === 'visible') load();
-}, 120_000);
+}, 60_000);
