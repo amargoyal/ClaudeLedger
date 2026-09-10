@@ -17,7 +17,18 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const DEFAULT_PORT = 4317;
 /** 18 weeks of heatmap is what fits a phone without becoming a smear. */
 const HEATMAP_WEEKS = 18;
-const PULSE_MS = 60_000;
+/*
+ * How often to fall back to asking.
+ *
+ * A minute was the price of asking over a phone connection: the poll was the
+ * only way anything arrived, and doing it faster spent battery and cellular data
+ * on an answer that was usually "nothing changed". With the stream carrying the
+ * changes, this fires only while there is no stream — after a failover, on a
+ * flaky connection, on a Mac too old to offer one — so it can be short enough to
+ * be unnoticeable without costing anything the rest of the time.
+ */
+const PULSE_MS = 15_000;
+/** How long a screen may go without a full rebuild, however quiet things are. */
 const FULL_REFRESH_MS = 4 * 60_000;
 
 function el(tag, className, text) {
