@@ -1,6 +1,7 @@
 import { watch } from 'node:fs';
+import { stat } from 'node:fs/promises';
 
-import { PROJECTS_DIR, fingerprint } from './transcripts.js';
+import { PROJECTS_DIR, listTranscripts } from './transcripts.js';
 
 /*
  * Notice transcript changes as they happen, instead of asking every few seconds.
@@ -54,6 +55,30 @@ let latestKey = null;
 let scanning = false;
 let scanQueued = false;
 
+/** Size and mtime of every transcript, so a change only re-stats what changed. */
+const sizes = new Map();
+
+async function restat(path) {
+  try {
+    const info = await stat(path);
+    sizes.set(path, { size: info.size, mtimeMs: info.mtimeMs });
+  } catch {
+    sizes.delete(path);
+  }
+}
+
+async function measure() {
+  sizes.clear();
+  for (const path of await listTranscripts(PROJECTS_DIR)) await restat(path);
+  let bytes = 0;
+  let newest = 0;
+  for (const { size, mtimeMs } of sizes.values()) {
+    bytes += size;
+    newest = Math.max(newest, mtimeMs);
+  }
+  return { files: sizes.size, bytes, newest };
+}
+
 /** Compare fingerprints as one value; a change in any part is a change. */
 export function fingerprintKey(fp) {
   return fp ? `${fp.files}:${fp.bytes}:${fp.newest}` : '';
@@ -71,7 +96,7 @@ async function scan() {
   }
   scanning = true;
   try {
-    const fp = await fingerprint();
+    const fp = await measure();
     const key = fingerprintKey(fp);
     // Only a change is worth waking anyone for. A watch fires on reads of some
     // filesystems and the fallback fires on a timer, so most scans find nothing.
