@@ -22,11 +22,28 @@ function startOfLocalDay(ts) {
   return d.getTime();
 }
 
+/**
+ * Local calendar fields per quarter hour. Every UTC offset is a whole number of
+ * quarter hours, so no slot spans two days, and a snapshot asks for every message.
+ */
+const QUARTER_HOUR_MS = 900_000;
+const localBySlot = new Map();
+
+function localParts(ts) {
+  const slot = Math.floor(ts / QUARTER_HOUR_MS);
+  let parts = localBySlot.get(slot);
+  if (!parts) {
+    const d = new Date(ts);
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    parts = { day: `${d.getFullYear()}-${m}-${day}`, hour: d.getHours(), weekday: d.getDay() };
+    localBySlot.set(slot, parts);
+  }
+  return parts;
+}
+
 function dayKey(ts) {
-  const d = new Date(ts);
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${m}-${day}`;
+  return localParts(ts).day;
 }
 
 // ------------------------------------------------------------------- formatting
