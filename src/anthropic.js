@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 
 import { record as recordHistory } from './history.js';
 import { projectLimits } from './burn.js';
-import { readCredentials } from './credentials.js';
+import { forgetCredentials, readCredentials } from './credentials.js';
 
 const BASE = process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com';
 
@@ -231,6 +231,7 @@ async function cached(key, ttl, fn) {
  * shouldn't let the user hammer an endpoint that already asked us to stop.
  */
 export function invalidateAccountCache() {
+  forgetCredentials();
   loadCache();
   for (const entry of store.values()) entry.fetchedAt = 0;
 }
