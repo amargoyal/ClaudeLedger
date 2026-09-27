@@ -1594,7 +1594,9 @@ async function load() {
 
     // Limit lines need the recorded utilization series.
     try {
-      const h = await (await fetch('/api/history')).json();
+      // Only what the chart can show; all of it is megabytes after a few weeks.
+      const since = data.snapshot?.tokens?.trend?.stamps?.[0] ?? 0;
+      const h = await (await fetch(`/api/history?since=${since}`)).json();
       state.limitHistory = h.readings ?? [];
       state.limitSpan = h.span ?? null;
     } catch {
