@@ -97,7 +97,9 @@ async function scan() {
   }
 }
 
-function nudge() {
+function nudge(_event, name) {
+  // Tool output and memory files live here too, and cannot move a fingerprint.
+  if (name && !String(name).endsWith('.jsonl')) return;
   clearTimeout(settleTimer);
   settleTimer = setTimeout(() => void scan(), SETTLE_MS);
   settleTimer.unref?.();
