@@ -775,6 +775,7 @@ function trayContextMenu() {
 
 /** What the tray shows now, so an unchanged value does not redraw the menu bar. */
 let shownTitle = null;
+let shownTooltip = null;
 
 async function refreshTray({ force = false } = {}) {
   if (!anthropic) return null;
@@ -794,7 +795,11 @@ async function refreshTray({ force = false } = {}) {
       tray.setTitle(title);
       shownTitle = title;
     }
-    tray.setToolTip(trayTooltip(lastAccount));
+    const tooltip = trayTooltip(lastAccount);
+    if (tooltip !== shownTooltip) {
+      tray.setToolTip(tooltip);
+      shownTooltip = tooltip;
+    }
   }
   // An open popover is looking at the same numbers as the title next to it, and
   // it only re-read them when it was opened — so a popover left open while a run
