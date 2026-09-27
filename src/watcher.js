@@ -60,6 +60,9 @@ let scanQueued = false;
 const sizes = new Map();
 /** Transcripts the watch has named since the last scan, or null to walk them all. */
 let changed = null;
+/** A watch can drop events, so walk everything now and then regardless. */
+const WALK_MS = 10 * 60_000;
+let walkedAt = 0;
 
 async function restat(path) {
   try {
@@ -73,9 +76,10 @@ async function restat(path) {
 async function measure() {
   const paths = changed;
   changed = new Set();
-  if (paths) {
+  if (paths && Date.now() - walkedAt < WALK_MS) {
     for (const path of paths) await restat(path);
   } else {
+    walkedAt = Date.now();
     sizes.clear();
     for (const path of await listTranscripts(PROJECTS_DIR)) await restat(path);
   }
