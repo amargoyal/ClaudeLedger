@@ -679,10 +679,7 @@ function buildFeed(sessions, now, limit = 8) {
 function buildBadges(allEvents, allByDay, streak, allTotals, sessions) {
   const tokens = totalIn(allTotals) + allTotals.outputTokens;
   const distinctModels = new Set(allEvents.map((e) => lookupModel(e.model).id)).size;
-  const nightMessages = allEvents.filter((e) => {
-    const h = new Date(e.ts).getHours();
-    return h >= 0 && h < 5;
-  }).length;
+  const nightMessages = allEvents.filter((e) => localParts(e.ts).hour < 5).length;
   const bestDay = Math.max(0, ...[...allByDay.values()].map((d) => d.messages));
   const longestSession = sessions.list.reduce((m, s) => Math.max(m, s.duration), 0);
   const cacheWrite = allTotals.cacheCreate5m + allTotals.cacheCreate1h;
