@@ -69,7 +69,19 @@ export function normalizeModel(raw) {
   return id;
 }
 
+/** A snapshot looks up every message's model; there are only a handful of ids. */
+const lookups = new Map();
+
 export function lookupModel(raw) {
+  let hit = lookups.get(raw);
+  if (!hit) {
+    hit = resolveModel(raw);
+    lookups.set(raw, hit);
+  }
+  return hit;
+}
+
+function resolveModel(raw) {
   const id = normalizeModel(raw);
   if (!id) return { id: 'unknown', ...UNKNOWN, color: TIER_COLORS.other };
   if (PRICING[id]) {
