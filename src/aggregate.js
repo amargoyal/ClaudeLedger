@@ -579,7 +579,7 @@ function buildSessions(events, titles, now) {
   });
 
   const hourBuckets = new Array(24).fill(0);
-  for (const e of events) hourBuckets[new Date(e.ts).getHours()] += 1;
+  for (const e of events) hourBuckets[localParts(e.ts).hour] += 1;
   const maxHour = Math.max(1, ...hourBuckets);
   const peakHourIdx = hourBuckets.indexOf(Math.max(...hourBuckets));
 
