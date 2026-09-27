@@ -1831,7 +1831,8 @@ load();
  */
 function onPulse(p) {
   const key = `${p.files}:${p.bytes}:${p.newest}`;
-  if (state.pulse && state.pulse !== key) load();
+  // A hidden window reloads when it comes back; see visibilitychange below.
+  if (state.pulse && state.pulse !== key && document.visibilityState === 'visible') load();
   state.pulse = key;
 }
 
