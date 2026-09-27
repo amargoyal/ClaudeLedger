@@ -53,7 +53,9 @@ let cache = null;
  */
 export async function readCredentials() {
   const now = Date.now();
-  if (cache && now - cache.at < CACHE_MS) return cache.value;
+  // An expired token may already have been refreshed in place, so ask again.
+  const expired = cache?.value?.expiresAt != null && cache.value.expiresAt <= now;
+  if (cache && !expired && now - cache.at < CACHE_MS) return cache.value;
   const value = await readFresh();
   cache = { at: now, value };
   return value;
