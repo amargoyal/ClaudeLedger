@@ -173,6 +173,18 @@ function saveCache() {
   }
 }
 
+/** key -> the request under way. One transcript write wakes several callers at once. */
+const pending = new Map();
+
+function shared(key, fn) {
+  let request = pending.get(key);
+  if (!request) {
+    request = fn().finally(() => pending.delete(key));
+    pending.set(key, request);
+  }
+  return request;
+}
+
 /**
  * Fetch with a TTL cache that degrades to stale-but-valid rather than to nothing.
  *
@@ -201,7 +213,7 @@ async function cached(key, ttl, fn) {
   }
 
   try {
-    const value = await fn();
+    const value = await shared(key, fn);
     // Only this key's backoff clears — a sibling endpoint may still be limited.
     backoff.delete(key);
     const fetchedAt = Date.now();
