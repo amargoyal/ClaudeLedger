@@ -41,6 +41,10 @@ async function readRaw() {
   }
 }
 
+/** Reading the keychain spawns a process, and every transcript write asked. */
+const CACHE_MS = 60_000;
+let cache = null;
+
 /**
  * @returns {Promise<null | {
  *   accessToken: string, expiresAt: number|null, refreshTokenExpiresAt: number|null,
@@ -48,6 +52,14 @@ async function readRaw() {
  * }>}
  */
 export async function readCredentials() {
+  const now = Date.now();
+  if (cache && now - cache.at < CACHE_MS) return cache.value;
+  const value = await readFresh();
+  cache = { at: now, value };
+  return value;
+}
+
+async function readFresh() {
   const raw = await readRaw();
   if (!raw || !raw.text) return null;
 
