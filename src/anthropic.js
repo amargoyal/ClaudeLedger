@@ -207,7 +207,7 @@ async function cached(key, ttl, fn) {
     const fetchedAt = Date.now();
     store.set(key, { value, fetchedAt });
     saveCache();
-    return { value, stale: false, fetchedAt };
+    return { value, stale: false, fetchedAt, fresh: true };
   } catch (err) {
     if (err.status === 429 || err.status === 529) {
       const ms = Math.min(BACKOFF_MAX, err.retryAfterMs ?? (waiting.ms ? waiting.ms * 2 : BACKOFF_MIN));
@@ -356,7 +356,7 @@ export async function fetchAccount() {
   const limits = usage.ok ? shapeUsage(usage.value) : null;
   // Only a genuinely fresh reading advances the burn-rate series; replaying a
   // cached value would invent a flat rate.
-  if (limits && !usage.stale) {
+  if (limits && usage.fresh) {
     if (recordSample(limits)) saveCache();
     // Time series for the limit lines on the token chart.
     recordHistory(limits);
