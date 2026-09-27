@@ -887,7 +887,7 @@ export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7
 function busiestWeekday(events) {
   if (!events.length) return '—';
   const counts = new Array(7).fill(0);
-  for (const e of events) counts[new Date(e.ts).getDay()] += 1;
+  for (const e of events) counts[localParts(e.ts).weekday] += 1;
   const idx = counts.indexOf(Math.max(...counts));
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][idx];
 }
