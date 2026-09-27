@@ -199,11 +199,12 @@ let eventsMemo = null;
 function loadEventsShared() {
   // Unchanged transcripts read the same; skip re-walking every file to learn so.
   const pulse = fingerprintKey(currentPulse());
-  if (pulse && eventsMemo?.pulse === pulse) return Promise.resolve(eventsMemo.value);
+  const fresh = eventsMemo && Date.now() - eventsMemo.at < SNAPSHOT_MAX_AGE_MS;
+  if (fresh && pulse && eventsMemo.pulse === pulse) return Promise.resolve(eventsMemo.value);
   if (!eventsInFlight) {
     eventsInFlight = loadEvents()
       .then((value) => {
-        eventsMemo = { pulse, value };
+        eventsMemo = { pulse, at: Date.now(), value };
         return value;
       })
       .finally(() => {
