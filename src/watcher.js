@@ -1,5 +1,6 @@
 import { watch } from 'node:fs';
 import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { PROJECTS_DIR, listTranscripts } from './transcripts.js';
 
@@ -57,6 +58,8 @@ let scanQueued = false;
 
 /** Size and mtime of every transcript, so a change only re-stats what changed. */
 const sizes = new Map();
+/** Transcripts the watch has named since the last scan, or null to walk them all. */
+let changed = null;
 
 async function restat(path) {
   try {
@@ -68,8 +71,14 @@ async function restat(path) {
 }
 
 async function measure() {
-  sizes.clear();
-  for (const path of await listTranscripts(PROJECTS_DIR)) await restat(path);
+  const paths = changed;
+  changed = new Set();
+  if (paths) {
+    for (const path of paths) await restat(path);
+  } else {
+    sizes.clear();
+    for (const path of await listTranscripts(PROJECTS_DIR)) await restat(path);
+  }
   let bytes = 0;
   let newest = 0;
   for (const { size, mtimeMs } of sizes.values()) {
@@ -125,6 +134,8 @@ async function scan() {
 function nudge(_event, name) {
   // Tool output and memory files live here too, and cannot move a fingerprint.
   if (name && !String(name).endsWith('.jsonl')) return;
+  if (name) changed?.add(join(PROJECTS_DIR, String(name)));
+  else changed = null;
   clearTimeout(settleTimer);
   settleTimer = setTimeout(() => void scan(), SETTLE_MS);
   settleTimer.unref?.();
@@ -132,7 +143,10 @@ function nudge(_event, name) {
 
 function startFallback() {
   if (fallbackTimer) return;
-  fallbackTimer = setInterval(() => void scan(), FALLBACK_POLL_MS);
+  fallbackTimer = setInterval(() => {
+    changed = null;
+    void scan();
+  }, FALLBACK_POLL_MS);
   fallbackTimer.unref?.();
 }
 
@@ -159,6 +173,8 @@ function stop() {
   settleTimer = null;
   clearInterval(fallbackTimer);
   fallbackTimer = null;
+  // Nothing is noted while stopped, so the next start has to walk again.
+  changed = null;
   watcher?.close();
   watcher = null;
 }
