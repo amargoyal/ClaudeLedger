@@ -61,6 +61,11 @@ export async function readCredentials() {
   return value;
 }
 
+/** Drop the cached credential, for a reconnect after logging in again. */
+export function forgetCredentials() {
+  cache = null;
+}
+
 async function readFresh() {
   const raw = await readRaw();
   if (!raw || !raw.text) return null;
