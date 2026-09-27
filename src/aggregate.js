@@ -28,6 +28,14 @@ function startOfLocalDay(ts) {
  */
 const QUARTER_HOUR_MS = 900_000;
 const localBySlot = new Map();
+/** The zone the cache was filled in. A Mac that travels has to start it again. */
+let slotZone = null;
+
+function checkZone() {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (zone !== slotZone) localBySlot.clear();
+  slotZone = zone;
+}
 
 function localParts(ts) {
   const slot = Math.floor(ts / QUARTER_HOUR_MS);
@@ -717,6 +725,7 @@ function buildBadges(allEvents, allByDay, streak, allTotals, sessions) {
  * lifetime facts and the design shows them as such.
  */
 export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7d', weeks = 26 } = {}) {
+  checkZone();
   const now = Date.now();
   const activeRange = RANGES.includes(range) ? range : '7d';
   const bounds = rangeBounds(activeRange, now);
