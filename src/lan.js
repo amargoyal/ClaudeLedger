@@ -163,15 +163,21 @@ export function verifyToken(token) {
   }
   if (found) {
     found.lastSeen = Date.now();
+    seenSinceSave = true;
     // Not saved on every request — `lastSeen` is a nicety, and this runs on the
     // hot path for the phone's poll loop.
   }
   return found ? shape(found) : null;
 }
 
+/** Whether a `lastSeen` has moved since the last flush. */
+let seenSinceSave = false;
+
 /** Flush in-memory `lastSeen` updates. Called on a slow timer, not per request. */
 export function persistLastSeen() {
-  if (devices) save();
+  if (!devices || !seenSinceSave) return;
+  seenSinceSave = false;
+  save();
 }
 
 // -------------------------------------------------------------------- addresses
