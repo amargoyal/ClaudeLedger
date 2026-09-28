@@ -1,6 +1,8 @@
 import { watch } from 'node:fs';
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
 
-import { PROJECTS_DIR, fingerprint } from './transcripts.js';
+import { PROJECTS_DIR, listTranscripts } from './transcripts.js';
 
 /*
  * Notice transcript changes as they happen, instead of asking every few seconds.
@@ -54,6 +56,42 @@ let latestKey = null;
 let scanning = false;
 let scanQueued = false;
 
+/** Size and mtime of every transcript, so a change only re-stats what changed. */
+const sizes = new Map();
+/** Transcripts the watch has named since the last scan, or null to walk them all. */
+let changed = null;
+/** A watch can drop events, so walk everything now and then regardless. */
+const WALK_MS = 10 * 60_000;
+let walkedAt = 0;
+
+async function restat(path) {
+  try {
+    const info = await stat(path);
+    sizes.set(path, { size: info.size, mtimeMs: info.mtimeMs });
+  } catch {
+    sizes.delete(path);
+  }
+}
+
+async function measure() {
+  const paths = changed;
+  changed = new Set();
+  if (paths && Date.now() - walkedAt < WALK_MS) {
+    for (const path of paths) await restat(path);
+  } else {
+    walkedAt = Date.now();
+    sizes.clear();
+    for (const path of await listTranscripts(PROJECTS_DIR)) await restat(path);
+  }
+  let bytes = 0;
+  let newest = 0;
+  for (const { size, mtimeMs } of sizes.values()) {
+    bytes += size;
+    newest = Math.max(newest, mtimeMs);
+  }
+  return { files: sizes.size, bytes, newest };
+}
+
 /** Compare fingerprints as one value; a change in any part is a change. */
 export function fingerprintKey(fp) {
   return fp ? `${fp.files}:${fp.bytes}:${fp.newest}` : '';
@@ -71,7 +109,7 @@ async function scan() {
   }
   scanning = true;
   try {
-    const fp = await fingerprint();
+    const fp = await measure();
     const key = fingerprintKey(fp);
     // Only a change is worth waking anyone for. A watch fires on reads of some
     // filesystems and the fallback fires on a timer, so most scans find nothing.
@@ -97,7 +135,11 @@ async function scan() {
   }
 }
 
-function nudge() {
+function nudge(_event, name) {
+  // Tool output and memory files live here too, and cannot move a fingerprint.
+  if (name && !String(name).endsWith('.jsonl')) return;
+  if (name) changed?.add(join(PROJECTS_DIR, String(name)));
+  else changed = null;
   clearTimeout(settleTimer);
   settleTimer = setTimeout(() => void scan(), SETTLE_MS);
   settleTimer.unref?.();
@@ -105,7 +147,10 @@ function nudge() {
 
 function startFallback() {
   if (fallbackTimer) return;
-  fallbackTimer = setInterval(() => void scan(), FALLBACK_POLL_MS);
+  fallbackTimer = setInterval(() => {
+    changed = null;
+    void scan();
+  }, FALLBACK_POLL_MS);
   fallbackTimer.unref?.();
 }
 
@@ -132,6 +177,8 @@ function stop() {
   settleTimer = null;
   clearInterval(fallbackTimer);
   fallbackTimer = null;
+  // Nothing is noted while stopped, so the next start has to walk again.
+  changed = null;
   watcher?.close();
   watcher = null;
 }

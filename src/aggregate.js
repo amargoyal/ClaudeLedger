@@ -22,11 +22,36 @@ function startOfLocalDay(ts) {
   return d.getTime();
 }
 
+/**
+ * Local calendar fields per quarter hour. Every UTC offset is a whole number of
+ * quarter hours, so no slot spans two days, and a snapshot asks for every message.
+ */
+const QUARTER_HOUR_MS = 900_000;
+const localBySlot = new Map();
+/** The zone the cache was filled in. A Mac that travels has to start it again. */
+let slotZone = null;
+
+function checkZone() {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (zone !== slotZone) localBySlot.clear();
+  slotZone = zone;
+}
+
+function localParts(ts) {
+  const slot = Math.floor(ts / QUARTER_HOUR_MS);
+  let parts = localBySlot.get(slot);
+  if (!parts) {
+    const d = new Date(ts);
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    parts = { day: `${d.getFullYear()}-${m}-${day}`, hour: d.getHours(), weekday: d.getDay() };
+    localBySlot.set(slot, parts);
+  }
+  return parts;
+}
+
 function dayKey(ts) {
-  const d = new Date(ts);
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${m}-${day}`;
+  return localParts(ts).day;
 }
 
 // ------------------------------------------------------------------- formatting
@@ -562,7 +587,7 @@ function buildSessions(events, titles, now) {
   });
 
   const hourBuckets = new Array(24).fill(0);
-  for (const e of events) hourBuckets[new Date(e.ts).getHours()] += 1;
+  for (const e of events) hourBuckets[localParts(e.ts).hour] += 1;
   const maxHour = Math.max(1, ...hourBuckets);
   const peakHourIdx = hourBuckets.indexOf(Math.max(...hourBuckets));
 
@@ -662,10 +687,7 @@ function buildFeed(sessions, now, limit = 8) {
 function buildBadges(allEvents, allByDay, streak, allTotals, sessions) {
   const tokens = totalIn(allTotals) + allTotals.outputTokens;
   const distinctModels = new Set(allEvents.map((e) => lookupModel(e.model).id)).size;
-  const nightMessages = allEvents.filter((e) => {
-    const h = new Date(e.ts).getHours();
-    return h >= 0 && h < 5;
-  }).length;
+  const nightMessages = allEvents.filter((e) => localParts(e.ts).hour < 5).length;
   const bestDay = Math.max(0, ...[...allByDay.values()].map((d) => d.messages));
   const longestSession = sessions.list.reduce((m, s) => Math.max(m, s.duration), 0);
   const cacheWrite = allTotals.cacheCreate5m + allTotals.cacheCreate1h;
@@ -703,6 +725,7 @@ function buildBadges(allEvents, allByDay, streak, allTotals, sessions) {
  * lifetime facts and the design shows them as such.
  */
 export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7d', weeks = 26 } = {}) {
+  checkZone();
   const now = Date.now();
   const activeRange = RANGES.includes(range) ? range : '7d';
   const bounds = rangeBounds(activeRange, now);
@@ -873,7 +896,7 @@ export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7
 function busiestWeekday(events) {
   if (!events.length) return '—';
   const counts = new Array(7).fill(0);
-  for (const e of events) counts[new Date(e.ts).getDay()] += 1;
+  for (const e of events) counts[localParts(e.ts).weekday] += 1;
   const idx = counts.indexOf(Math.max(...counts));
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][idx];
 }

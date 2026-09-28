@@ -773,6 +773,10 @@ function trayContextMenu() {
   ]);
 }
 
+/** What the tray shows now, so an unchanged value does not redraw the menu bar. */
+let shownTitle = null;
+let shownTooltip = null;
+
 async function refreshTray({ force = false } = {}) {
   if (!anthropic) return null;
   if (force) anthropic.invalidateAccountCache();
@@ -786,8 +790,16 @@ async function refreshTray({ force = false } = {}) {
   checkLimitAlerts(lastAccount);
 
   if (tray && !tray.isDestroyed()) {
-    if (isMac) tray.setTitle(trayTitle(lastAccount));
-    tray.setToolTip(trayTooltip(lastAccount));
+    const title = trayTitle(lastAccount);
+    if (isMac && title !== shownTitle) {
+      tray.setTitle(title);
+      shownTitle = title;
+    }
+    const tooltip = trayTooltip(lastAccount);
+    if (tooltip !== shownTooltip) {
+      tray.setToolTip(tooltip);
+      shownTooltip = tooltip;
+    }
   }
   // An open popover is looking at the same numbers as the title next to it, and
   // it only re-read them when it was opened — so a popover left open while a run

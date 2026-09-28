@@ -8,7 +8,7 @@ import { readConnection } from './src/credentials.js';
 import { METRIC_IDS, buildSnapshot, metricSeries, usageCurve } from './src/aggregate.js';
 import { query as queryHistory, span as historySpan } from './src/history.js';
 import { fingerprint, loadEvents } from './src/transcripts.js';
-import { current as currentPulse, subscribe as subscribePulse } from './src/watcher.js';
+import { current as currentPulse, fingerprintKey, subscribe as subscribePulse } from './src/watcher.js';
 import { refreshTunnel, tunnelState } from './src/tunnel.js';
 import { tailscaleState } from './src/tailscale.js';
 import {
@@ -193,11 +193,23 @@ let snapshotMemo = null;
 /** @type {Promise<Awaited<ReturnType<typeof loadEvents>>> | null} */
 let eventsInFlight = null;
 
+/** The last read, and the watcher's fingerprint when it started. */
+let eventsMemo = null;
+
 function loadEventsShared() {
+  // Unchanged transcripts read the same; skip re-walking every file to learn so.
+  const pulse = fingerprintKey(currentPulse());
+  const fresh = eventsMemo && Date.now() - eventsMemo.at < SNAPSHOT_MAX_AGE_MS;
+  if (fresh && pulse && eventsMemo.pulse === pulse) return Promise.resolve(eventsMemo.value);
   if (!eventsInFlight) {
-    eventsInFlight = loadEvents().finally(() => {
-      eventsInFlight = null;
-    });
+    eventsInFlight = loadEvents()
+      .then((value) => {
+        eventsMemo = { pulse, at: Date.now(), value };
+        return value;
+      })
+      .finally(() => {
+        eventsInFlight = null;
+      });
   }
   return eventsInFlight;
 }

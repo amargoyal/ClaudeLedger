@@ -64,6 +64,8 @@ const state = {
     JSON.parse(localStorage.getItem('ledger.series') ?? 'null') ?? ['input', 'output'],
   ),
   limitHistory: [],
+  /** How much history exists in all, for the footnote: `{ from, count }`. */
+  limitSpan: null,
   // Wheel-zoom window on the token chart, {from, to} in epoch ms, or null for the
   // whole range. Deliberately not persisted: a zoom is a gesture, not a preference.
   zoom: null,
@@ -672,15 +674,16 @@ function trendNoteFor(plots) {
       `${joinLabels(unmatched)}: dashed, because no local usage matches that window, so only the current reading is known.`,
     );
   }
-  if (state.limitHistory.length) {
-    const since = new Date(state.limitHistory[0].t).toLocaleString(undefined, {
+  const recorded = state.limitSpan;
+  if (recorded?.count) {
+    const since = new Date(recorded.from).toLocaleString(undefined, {
       month: 'short',
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
     });
     parts.push(
-      `${state.limitHistory.length} reading${state.limitHistory.length === 1 ? '' : 's'} recorded since ${since}.`,
+      `${recorded.count} reading${recorded.count === 1 ? '' : 's'} recorded since ${since}.`,
     );
   }
   return parts.join(' ');
@@ -1591,10 +1594,14 @@ async function load() {
 
     // Limit lines need the recorded utilization series.
     try {
-      const h = await (await fetch('/api/history')).json();
+      // Only what the chart can show; all of it is megabytes after a few weeks.
+      const since = data.snapshot?.tokens?.trend?.stamps?.[0] ?? 0;
+      const h = await (await fetch(`/api/history?since=${since}`)).json();
       state.limitHistory = h.readings ?? [];
+      state.limitSpan = h.span ?? null;
     } catch {
       state.limitHistory = [];
+      state.limitSpan = null;
     }
   } catch (err) {
     showBanner(`Failed to load data: ${err.message}`);
@@ -1831,7 +1838,8 @@ load();
  */
 function onPulse(p) {
   const key = `${p.files}:${p.bytes}:${p.newest}`;
-  if (state.pulse && state.pulse !== key) load();
+  // A hidden window reloads when it comes back; see visibilitychange below.
+  if (state.pulse && state.pulse !== key && document.visibilityState === 'visible') load();
   state.pulse = key;
 }
 

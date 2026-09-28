@@ -11,7 +11,7 @@ export const PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR ?? join(homedir(), '
  */
 const fileCache = new Map();
 
-async function listTranscripts(dir) {
+export async function listTranscripts(dir) {
   const out = [];
   let entries;
   try {

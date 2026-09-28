@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 
 import { record as recordHistory } from './history.js';
 import { projectLimits } from './burn.js';
-import { readCredentials } from './credentials.js';
+import { forgetCredentials, readCredentials } from './credentials.js';
 
 const BASE = process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com';
 
@@ -173,6 +173,18 @@ function saveCache() {
   }
 }
 
+/** key -> the request under way. One transcript write wakes several callers at once. */
+const pending = new Map();
+
+function shared(key, fn) {
+  let request = pending.get(key);
+  if (!request) {
+    request = fn().finally(() => pending.delete(key));
+    pending.set(key, request);
+  }
+  return request;
+}
+
 /**
  * Fetch with a TTL cache that degrades to stale-but-valid rather than to nothing.
  *
@@ -201,13 +213,13 @@ async function cached(key, ttl, fn) {
   }
 
   try {
-    const value = await fn();
+    const value = await shared(key, fn);
     // Only this key's backoff clears — a sibling endpoint may still be limited.
     backoff.delete(key);
     const fetchedAt = Date.now();
     store.set(key, { value, fetchedAt });
     saveCache();
-    return { value, stale: false, fetchedAt };
+    return { value, stale: false, fetchedAt, fresh: true };
   } catch (err) {
     if (err.status === 429 || err.status === 529) {
       const ms = Math.min(BACKOFF_MAX, err.retryAfterMs ?? (waiting.ms ? waiting.ms * 2 : BACKOFF_MIN));
@@ -231,6 +243,7 @@ async function cached(key, ttl, fn) {
  * shouldn't let the user hammer an endpoint that already asked us to stop.
  */
 export function invalidateAccountCache() {
+  forgetCredentials();
   loadCache();
   for (const entry of store.values()) entry.fetchedAt = 0;
 }
@@ -242,7 +255,7 @@ function sessionWindow(limits) {
 /** Remember a fresh session-window reading so a rate can be derived later. */
 function recordSample(limits) {
   const session = sessionWindow(limits);
-  if (!session || session.utilization == null) return;
+  if (!session || session.utilization == null) return false;
 
   const last = samples[samples.length - 1];
   // A changed reset time means the window rolled over; the old series no longer
@@ -251,10 +264,11 @@ function recordSample(limits) {
 
   const now = Date.now();
   const latest = samples[samples.length - 1];
-  if (latest && latest.percent === session.utilization && now - latest.t < 60_000) return;
+  if (latest && latest.percent === session.utilization && now - latest.t < 60_000) return false;
 
   samples.push({ t: now, percent: session.utilization, resetsAt: session.resetsAt });
   if (samples.length > MAX_SAMPLES) samples = samples.slice(-MAX_SAMPLES);
+  return true;
 }
 
 /**
@@ -354,9 +368,8 @@ export async function fetchAccount() {
   const limits = usage.ok ? shapeUsage(usage.value) : null;
   // Only a genuinely fresh reading advances the burn-rate series; replaying a
   // cached value would invent a flat rate.
-  if (limits && !usage.stale) {
-    recordSample(limits);
-    saveCache();
+  if (limits && usage.fresh) {
+    if (recordSample(limits)) saveCache();
     // Time series for the limit lines on the token chart.
     recordHistory(limits);
   }
