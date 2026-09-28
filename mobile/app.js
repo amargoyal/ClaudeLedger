@@ -1691,6 +1691,7 @@ function openDaySheet(day) {
     const dl = el('dl');
     dl.style.margin = '0';
     dl.append(kv('Messages', String(day.messages ?? 0)), kv('Tokens', day.tokens ?? '0'), kv('API-equivalent', day.cost ?? '$0'));
+    if (day.recorded) dl.append(kv('Source', 'Claude Code stats'));
     body.append(dl);
     const close = el('button', 'btn primary', 'Done');
     close.type = 'button';
