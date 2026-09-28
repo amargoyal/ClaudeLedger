@@ -789,7 +789,7 @@ export function buildSnapshot({ assistant, prompts, titles, recorded, meta }, { 
 
   const allByDay = dailyCounts(assistant);
   const activeByDay = withRecordedDays(allByDay, recorded, meta?.oldestFileAt);
-  const streak = streaks(allByDay, now);
+  const streak = streaks(activeByDay, now);
   const sessions = buildSessions(events, titles, now);
   const allSessions = buildSessions(assistant, titles, now);
   const active = activeTime(events);
@@ -870,7 +870,7 @@ export function buildSnapshot({ assistant, prompts, titles, recorded, meta }, { 
       unit: streak.current === 1 ? 'day' : 'days',
       sub: `personal best: ${streak.longest}`,
       delta: null,
-      series: streakSeries(allByDay, now),
+      series: streakSeries(activeByDay, now),
     },
   ];
 
