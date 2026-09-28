@@ -225,7 +225,7 @@ function streaks(byDay, now) {
 
   let current = 0;
   for (let i = 0; ; i += 1) {
-    const key = dayKey(today - i * DAY_MS);
+    const key = dayKey(addDays(today, -i));
     if (byDay.has(key)) current += 1;
     else if (i === 0) continue; // today may simply not have started yet
     else break;
