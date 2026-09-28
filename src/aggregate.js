@@ -750,7 +750,7 @@ function buildBadges(allEvents, allByDay, streak, allTotals, sessions) {
  * All-time regardless of range: heatmap, streaks, achievements — those are
  * lifetime facts and the design shows them as such.
  */
-export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7d', weeks = 26 } = {}) {
+export function buildSnapshot({ assistant, prompts, titles, recorded, meta }, { range = '7d', weeks = 26 } = {}) {
   checkZone();
   const now = Date.now();
   const activeRange = RANGES.includes(range) ? range : '7d';
@@ -788,6 +788,7 @@ export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7
   };
 
   const allByDay = dailyCounts(assistant);
+  const activeByDay = withRecordedDays(allByDay, recorded, meta?.oldestFileAt);
   const streak = streaks(allByDay, now);
   const sessions = buildSessions(events, titles, now);
   const allSessions = buildSessions(assistant, titles, now);
@@ -888,7 +889,7 @@ export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7
     },
     statCards,
     activity: {
-      heatmap: buildHeatmap(allByDay, weeks, now),
+      heatmap: buildHeatmap(activeByDay, weeks, now),
       heatmapTitle: `Daily activity — last ${weeks} weeks`,
       weeks,
       streak,
