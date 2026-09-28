@@ -329,12 +329,13 @@ function buildHeatmap(byDay, weeks, now) {
     }
     weekCols.push({ days });
 
-    const monthOfCol = new Date(start + w * 7 * DAY_MS).getMonth();
+    const weekStart = addDays(start, w * 7);
+    const monthOfCol = new Date(weekStart).getMonth();
     if (monthOfCol !== lastMonth) {
       lastMonth = monthOfCol;
       monthMarks.push({
         col: w,
-        label: new Date(start + w * 7 * DAY_MS).toLocaleDateString('en-US', { month: 'short' }),
+        label: new Date(weekStart).toLocaleDateString('en-US', { month: 'short' }),
       });
     }
   }
