@@ -203,6 +203,7 @@ export async function loadEvents() {
   const prompts = [];
   const titles = new Map();
   let bytes = 0;
+  let oldest = Infinity;
 
   for (const path of files) {
     let info;
@@ -212,6 +213,7 @@ export async function loadEvents() {
       continue;
     }
     bytes += info.size;
+    oldest = Math.min(oldest, info.mtimeMs);
 
     const key = `${info.mtimeMs}:${info.size}`;
     let parsed = fileCache.get(path);
@@ -255,6 +257,8 @@ export async function loadEvents() {
       dir: PROJECTS_DIR,
       firstTs: assistant.length ? assistant[0].ts : null,
       lastTs: assistant.length ? assistant[assistant.length - 1].ts : null,
+      // Anything older than this may have been pruned rather than never written.
+      oldestFileAt: Number.isFinite(oldest) ? oldest : null,
     },
   };
 }
