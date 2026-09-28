@@ -241,7 +241,7 @@ function streaks(byDay, now) {
   let longestStart = null;
   for (const key of days) {
     const ts = startOfLocalDay(Date.parse(`${key}T12:00:00`));
-    if (prev != null && ts - prev === DAY_MS) {
+    if (prev != null && addDays(prev, 1) === ts) {
       run += 1;
     } else {
       run = 1;
