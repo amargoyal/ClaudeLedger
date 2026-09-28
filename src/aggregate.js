@@ -220,6 +220,24 @@ function dailyCounts(events) {
   return byDay;
 }
 
+/**
+ * The days Claude Code pruned, put back from its own tally.
+ *
+ * A day before the oldest transcript left, with nothing in the transcripts, was
+ * deleted rather than idle. Its count is Claude Code's, which includes your own
+ * messages and runs on UTC days, so it only ever fills a gap.
+ */
+function withRecordedDays(byDay, recorded, oldestFileAt) {
+  if (!recorded?.size || oldestFileAt == null) return byDay;
+  const cutoff = dayKey(oldestFileAt);
+  const merged = new Map(byDay);
+  for (const [day, messages] of recorded) {
+    if (day >= cutoff || merged.has(day)) continue;
+    merged.set(day, { messages, tokens: 0, cost: 0, recorded: true });
+  }
+  return merged;
+}
+
 function streaks(byDay, now) {
   const today = startOfLocalDay(now);
 
