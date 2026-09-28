@@ -340,8 +340,9 @@ function buildHeatmap(byDay, weeks, now) {
           year: 'numeric',
         }),
         messages,
-        tokens: fmtCount(rec?.tokens ?? 0),
-        cost: fmtMoney(rec?.cost ?? 0),
+        // Claude Code's tally counts messages only; zero here would be a guess.
+        tokens: rec?.recorded ? '—' : fmtCount(rec?.tokens ?? 0),
+        cost: rec?.recorded ? '—' : fmtMoney(rec?.cost ?? 0),
         tip: `${new Date(ts).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} · ${messages} message${messages === 1 ? '' : 's'}`,
       });
     }
