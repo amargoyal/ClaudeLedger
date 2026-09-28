@@ -278,7 +278,12 @@ function streaks(byDay, now) {
     longest,
     longestRange:
       longestStart != null && longestEnd != null
-        ? `${new Date(longestStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${new Date(longestEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+        ? `${new Date(longestStart).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            // A run that crosses New Year reads as a few days without it.
+            ...(new Date(longestStart).getFullYear() !== new Date(longestEnd).getFullYear() && { year: 'numeric' }),
+          })} – ${new Date(longestEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
         : null,
     activeDays: byDay.size,
   };
