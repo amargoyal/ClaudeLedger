@@ -279,8 +279,8 @@ const HEAT_COLORS = [
 function buildHeatmap(byDay, weeks, now) {
   const today = startOfLocalDay(now);
   // End the grid on the Saturday of the current week so columns are whole weeks.
-  const endOfWeek = today + (6 - new Date(today).getDay()) * DAY_MS;
-  const start = endOfWeek - (weeks * 7 - 1) * DAY_MS;
+  const endOfWeek = addDays(today, 6 - new Date(today).getDay());
+  const start = addDays(endOfWeek, -(weeks * 7 - 1));
 
   const counts = [...byDay.values()].map((d) => d.messages).filter((n) => n > 0);
   counts.sort((a, b) => a - b);
@@ -302,7 +302,7 @@ function buildHeatmap(byDay, weeks, now) {
   for (let w = 0; w < weeks; w += 1) {
     const days = [];
     for (let d = 0; d < 7; d += 1) {
-      const ts = start + (w * 7 + d) * DAY_MS;
+      const ts = addDays(start, w * 7 + d);
       if (ts > today) {
         days.push({ empty: true, color: 'transparent', tip: '' });
         continue;
