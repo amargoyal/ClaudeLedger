@@ -937,7 +937,7 @@ function activeTimeSeries(events, bounds, now, points = 12) {
 function streakSeries(byDay, now, days = 14) {
   const today = startOfLocalDay(now);
   return Array.from({ length: days }, (_, i) =>
-    byDay.has(dayKey(today - (days - 1 - i) * DAY_MS)) ? 1 : 0,
+    byDay.has(dayKey(addDays(today, -(days - 1 - i)))) ? 1 : 0,
   );
 }
 
