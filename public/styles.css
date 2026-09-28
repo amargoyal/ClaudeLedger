@@ -712,6 +712,19 @@ body.is-scrolled .page-head {
   flex: 0 0 26px;
 }
 
+/* The grid runs Sunday to Saturday, so Mon, Wed and Fri are rows 2, 4 and 6. */
+.heat-daylabels span:nth-child(1) {
+  grid-row: 2;
+}
+
+.heat-daylabels span:nth-child(2) {
+  grid-row: 4;
+}
+
+.heat-daylabels span:nth-child(3) {
+  grid-row: 6;
+}
+
 /* Flexible columns so the grid spans the card. Fixed 11px cells left a wide dead
    gap on the left and made aligning the month labels guesswork. JS sets
    grid-template-columns to one track per week. */
