@@ -251,6 +251,7 @@ export async function loadEvents() {
     assistant,
     prompts,
     titles,
+    recorded: await readRecordedDays(),
     meta: {
       files: files.length,
       bytes,
