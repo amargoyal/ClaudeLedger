@@ -340,6 +340,8 @@ function buildHeatmap(byDay, weeks, now) {
           year: 'numeric',
         }),
         messages,
+        // Counted by Claude Code after its transcript was deleted.
+        recorded: Boolean(rec?.recorded),
         // Claude Code's tally counts messages only; zero here would be a guess.
         tokens: rec?.recorded ? '—' : fmtCount(rec?.tokens ?? 0),
         cost: rec?.recorded ? '—' : fmtMoney(rec?.cost ?? 0),
