@@ -22,6 +22,13 @@ function startOfLocalDay(ts) {
   return d.getTime();
 }
 
+/** `n` calendar days on. A day is 23 or 25 hours across a clock change, not DAY_MS. */
+function addDays(ts, n) {
+  const d = new Date(ts);
+  d.setDate(d.getDate() + n);
+  return d.getTime();
+}
+
 /**
  * Local calendar fields per quarter hour. Every UTC offset is a whole number of
  * quarter hours, so no slot spans two days, and a snapshot asks for every message.
