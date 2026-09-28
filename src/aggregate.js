@@ -181,9 +181,9 @@ function rangeBounds(range, now) {
     case 'today':
       return { from: today, to: now };
     case '7d':
-      return { from: today - 6 * DAY_MS, to: now };
+      return { from: addDays(today, -6), to: now };
     case '30d':
-      return { from: today - 29 * DAY_MS, to: now };
+      return { from: addDays(today, -29), to: now };
     default:
       return { from: -Infinity, to: now };
   }
