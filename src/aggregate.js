@@ -22,6 +22,13 @@ function startOfLocalDay(ts) {
   return d.getTime();
 }
 
+/** `n` calendar days on. A day is 23 or 25 hours across a clock change, not DAY_MS. */
+function addDays(ts, n) {
+  const d = new Date(ts);
+  d.setDate(d.getDate() + n);
+  return d.getTime();
+}
+
 /**
  * Local calendar fields per quarter hour. Every UTC offset is a whole number of
  * quarter hours, so no slot spans two days, and a snapshot asks for every message.
@@ -174,9 +181,9 @@ function rangeBounds(range, now) {
     case 'today':
       return { from: today, to: now };
     case '7d':
-      return { from: today - 6 * DAY_MS, to: now };
+      return { from: addDays(today, -6), to: now };
     case '30d':
-      return { from: today - 29 * DAY_MS, to: now };
+      return { from: addDays(today, -29), to: now };
     default:
       return { from: -Infinity, to: now };
   }
@@ -213,12 +220,30 @@ function dailyCounts(events) {
   return byDay;
 }
 
+/**
+ * The days Claude Code pruned, put back from its own tally.
+ *
+ * A day before the oldest transcript left, with nothing in the transcripts, was
+ * deleted rather than idle. Its count is Claude Code's, which includes your own
+ * messages and runs on UTC days, so it only ever fills a gap.
+ */
+function withRecordedDays(byDay, recorded, oldestFileAt) {
+  if (!recorded?.size || oldestFileAt == null) return byDay;
+  const cutoff = dayKey(oldestFileAt);
+  const merged = new Map(byDay);
+  for (const [day, messages] of recorded) {
+    if (day >= cutoff || merged.has(day)) continue;
+    merged.set(day, { messages, tokens: 0, cost: 0, recorded: true });
+  }
+  return merged;
+}
+
 function streaks(byDay, now) {
   const today = startOfLocalDay(now);
 
   let current = 0;
   for (let i = 0; ; i += 1) {
-    const key = dayKey(today - i * DAY_MS);
+    const key = dayKey(addDays(today, -i));
     if (byDay.has(key)) current += 1;
     else if (i === 0) continue; // today may simply not have started yet
     else break;
@@ -234,7 +259,7 @@ function streaks(byDay, now) {
   let longestStart = null;
   for (const key of days) {
     const ts = startOfLocalDay(Date.parse(`${key}T12:00:00`));
-    if (prev != null && ts - prev === DAY_MS) {
+    if (prev != null && addDays(prev, 1) === ts) {
       run += 1;
     } else {
       run = 1;
@@ -253,7 +278,12 @@ function streaks(byDay, now) {
     longest,
     longestRange:
       longestStart != null && longestEnd != null
-        ? `${new Date(longestStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${new Date(longestEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+        ? `${new Date(longestStart).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            // A run that crosses New Year reads as a few days without it.
+            ...(new Date(longestStart).getFullYear() !== new Date(longestEnd).getFullYear() && { year: 'numeric' }),
+          })} – ${new Date(longestEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
         : null,
     activeDays: byDay.size,
   };
@@ -272,8 +302,8 @@ const HEAT_COLORS = [
 function buildHeatmap(byDay, weeks, now) {
   const today = startOfLocalDay(now);
   // End the grid on the Saturday of the current week so columns are whole weeks.
-  const endOfWeek = today + (6 - new Date(today).getDay()) * DAY_MS;
-  const start = endOfWeek - (weeks * 7 - 1) * DAY_MS;
+  const endOfWeek = addDays(today, 6 - new Date(today).getDay());
+  const start = addDays(endOfWeek, -(weeks * 7 - 1));
 
   const counts = [...byDay.values()].map((d) => d.messages).filter((n) => n > 0);
   counts.sort((a, b) => a - b);
@@ -295,7 +325,7 @@ function buildHeatmap(byDay, weeks, now) {
   for (let w = 0; w < weeks; w += 1) {
     const days = [];
     for (let d = 0; d < 7; d += 1) {
-      const ts = start + (w * 7 + d) * DAY_MS;
+      const ts = addDays(start, w * 7 + d);
       if (ts > today) {
         days.push({ empty: true, color: 'transparent', tip: '' });
         continue;
@@ -315,19 +345,23 @@ function buildHeatmap(byDay, weeks, now) {
           year: 'numeric',
         }),
         messages,
-        tokens: fmtCount(rec?.tokens ?? 0),
-        cost: fmtMoney(rec?.cost ?? 0),
+        // Counted by Claude Code after its transcript was deleted.
+        recorded: Boolean(rec?.recorded),
+        // Claude Code's tally counts messages only; zero here would be a guess.
+        tokens: rec?.recorded ? '—' : fmtCount(rec?.tokens ?? 0),
+        cost: rec?.recorded ? '—' : fmtMoney(rec?.cost ?? 0),
         tip: `${new Date(ts).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} · ${messages} message${messages === 1 ? '' : 's'}`,
       });
     }
     weekCols.push({ days });
 
-    const monthOfCol = new Date(start + w * 7 * DAY_MS).getMonth();
+    const weekStart = addDays(start, w * 7);
+    const monthOfCol = new Date(weekStart).getMonth();
     if (monthOfCol !== lastMonth) {
       lastMonth = monthOfCol;
       monthMarks.push({
         col: w,
-        label: new Date(start + w * 7 * DAY_MS).toLocaleDateString('en-US', { month: 'short' }),
+        label: new Date(weekStart).toLocaleDateString('en-US', { month: 'short' }),
       });
     }
   }
@@ -724,7 +758,7 @@ function buildBadges(allEvents, allByDay, streak, allTotals, sessions) {
  * All-time regardless of range: heatmap, streaks, achievements — those are
  * lifetime facts and the design shows them as such.
  */
-export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7d', weeks = 26 } = {}) {
+export function buildSnapshot({ assistant, prompts, titles, recorded, meta }, { range = '7d', weeks = 26 } = {}) {
   checkZone();
   const now = Date.now();
   const activeRange = RANGES.includes(range) ? range : '7d';
@@ -762,7 +796,8 @@ export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7
   };
 
   const allByDay = dailyCounts(assistant);
-  const streak = streaks(allByDay, now);
+  const activeByDay = withRecordedDays(allByDay, recorded, meta?.oldestFileAt);
+  const streak = streaks(activeByDay, now);
   const sessions = buildSessions(events, titles, now);
   const allSessions = buildSessions(assistant, titles, now);
   const active = activeTime(events);
@@ -843,7 +878,7 @@ export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7
       unit: streak.current === 1 ? 'day' : 'days',
       sub: `personal best: ${streak.longest}`,
       delta: null,
-      series: streakSeries(allByDay, now),
+      series: streakSeries(activeByDay, now),
     },
   ];
 
@@ -862,7 +897,7 @@ export function buildSnapshot({ assistant, prompts, titles, meta }, { range = '7
     },
     statCards,
     activity: {
-      heatmap: buildHeatmap(allByDay, weeks, now),
+      heatmap: buildHeatmap(activeByDay, weeks, now),
       heatmapTitle: `Daily activity — last ${weeks} weeks`,
       weeks,
       streak,
@@ -929,7 +964,7 @@ function activeTimeSeries(events, bounds, now, points = 12) {
 function streakSeries(byDay, now, days = 14) {
   const today = startOfLocalDay(now);
   return Array.from({ length: days }, (_, i) =>
-    byDay.has(dayKey(today - (days - 1 - i) * DAY_MS)) ? 1 : 0,
+    byDay.has(dayKey(addDays(today, -(days - 1 - i)))) ? 1 : 0,
   );
 }
 

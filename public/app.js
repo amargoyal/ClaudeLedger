@@ -379,6 +379,7 @@ function attachHeatHover(cols) {
     tip.append(tipRow('Messages', String(day.messages)));
     tip.append(tipRow('Tokens', day.tokens));
     tip.append(tipRow('API-equiv.', day.cost));
+    if (day.recorded) tip.append(tipRow('Source', 'Claude Code stats'));
     positionTip(event);
   };
 }

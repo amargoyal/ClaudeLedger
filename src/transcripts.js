@@ -3,6 +3,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 export const PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR ?? join(homedir(), '.claude', 'projects');
+/** Claude Code's own running tally, which it keeps after deleting the transcripts. */
+const STATS_FILE = join(dirname(PROJECTS_DIR), 'stats-cache.json');
 
 /**
  * Per-file parse cache keyed by path, invalidated on mtime/size change. A full
@@ -144,6 +146,25 @@ function parseFile(text, path) {
 }
 
 /**
+ * Messages per day as Claude Code counted them, keyed by its date string.
+ *
+ * Claude Code deletes a transcript 30 days after its last write by default, so
+ * for older days this is the only record left. Its dates are UTC, not local.
+ */
+async function readRecordedDays() {
+  try {
+    const stats = JSON.parse(await readFile(STATS_FILE, 'utf8'));
+    const days = new Map();
+    for (const d of stats.dailyActivity ?? []) {
+      if (typeof d?.date === 'string' && d.messageCount > 0) days.set(d.date, d.messageCount);
+    }
+    return days;
+  } catch {
+    return new Map();
+  }
+}
+
+/**
  * Cheap change-detector: file count, total size and newest mtime, without reading
  * or parsing anything. Lets the UI notice new messages within seconds instead of
  * waiting for the next full refresh.
@@ -182,6 +203,7 @@ export async function loadEvents() {
   const prompts = [];
   const titles = new Map();
   let bytes = 0;
+  let oldest = Infinity;
 
   for (const path of files) {
     let info;
@@ -191,6 +213,7 @@ export async function loadEvents() {
       continue;
     }
     bytes += info.size;
+    oldest = Math.min(oldest, info.mtimeMs);
 
     const key = `${info.mtimeMs}:${info.size}`;
     let parsed = fileCache.get(path);
@@ -228,12 +251,15 @@ export async function loadEvents() {
     assistant,
     prompts,
     titles,
+    recorded: await readRecordedDays(),
     meta: {
       files: files.length,
       bytes,
       dir: PROJECTS_DIR,
       firstTs: assistant.length ? assistant[0].ts : null,
       lastTs: assistant.length ? assistant[assistant.length - 1].ts : null,
+      // Anything older than this may have been pruned rather than never written.
+      oldestFileAt: Number.isFinite(oldest) ? oldest : null,
     },
   };
 }
